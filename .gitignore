@@ -30,3 +30,27 @@ go.work.sum
 # Editor/IDE
 .idea/
 .vscode/
+# App runtime data and local config (contains payment requisites)
+/data/
+/config.yaml
+*.db
+*.db-wal
+*.db-shm
+
+# Frontend
+web/node_modules/
+web/dist/
+internal/webdist/dist/*
+!internal/webdist/dist/.gitkeep
+
+# Local tools (portable Node, see make tools-node)
+/.tools/
+
+# SQLite backups
+/backups/
+
+# Rendered panel template (make sub-template)
+/sub_template/
+
+# macOS
+.DS_Store

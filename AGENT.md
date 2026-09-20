@@ -15,10 +15,12 @@ PWA-приложение (в первую очередь iOS и Android), из �
 1. Показать информацию о текущей подписке (срок, трафик, статус, ссылка/QR для клиента).
 2. Прислать push о скором истечении подписки.
 3. Присылать кастомные push (рассылка от администратора).
-4. Продлить подписку (пока заглушка: кнопка + контракт API, оплата решается позже).
+4. Продлить подписку: клиент выбирает тариф, видит реквизиты, нажимает «Я перевёл» — продление
+   применяется сразу (принцип доверия), админ получает push и подтверждает или откатывает.
 
 Чем проект НЕ является: не админка панели, не создаёт и не удаляет клиентов, не управляет
-нодами и inbound'ами, не заменяет ссылку подписки 3x-ui.
+нодами и inbound'ами, не заменяет ссылку подписки 3x-ui, не принимает платежи сам (нет платёжных
+провайдеров, оплата идёт вне приложения).
 
 ## 2. Зависимость от 3x-ui
 
@@ -76,12 +78,15 @@ PWA-приложение (в первую очередь iOS и Android), из �
 
 | Вопрос | Решение |
 |---|---|
-| Вход клиента | Magic-link `GET /s/<subId>` → сессия в httpOnly-cookie. Без паролей и регистрации |
-| Продление | Заглушка: кнопка → `POST /api/renew` → запись заявки в БД + ответ «скоро». Реальный механизм — позже (см. §13) |
+| Вход клиента | Magic-link `GET /s/<subId>` → сессия в httpOnly-cookie. Без паролей и регистрации. Клиенту выдаётся его **ссылка подписки** из панели (та же, что в VPN-приложении): открытая в браузере, она через шаблон страницы подписки 3x-ui (`subThemeDir`) редиректит на `APP_BASE_URL/s/<subId>` (решение 2026-09-18) |
+| Оплата | Вне приложения, вручную, по принципу доверия. Платёжных провайдеров нет; слой `Payment` с единственной реализацией `manual` (реквизиты из конфига) |
+| Продление | Клиент выбирает план → сумма + реквизиты → «Я перевёл» → приложение сразу делает `bulkAdjust` → админу push. Семантика: +N дней от `max(now, expiryTime)`; бессрочным кнопка не показывается |
+| Тарифы | `config.yaml`: 30 дн/180 ₽, 90 дн/500 ₽, 180 дн/960 ₽; реквизиты там же, показываются как есть, без кода заявки |
+| Защита | Одна неподтверждённая (`pending`) заявка на подписку. «Отклонить» откатывает ровно `applied_days` и шлёт клиенту push |
 | Push-канал | Только Web Push (VAPID). Без Firebase, без Telegram |
-| Кастомные push | Админский HTTP API с отдельным токеном + CLI-обёртка. Веб-админки нет |
+| Админ | Входит по своей ссылке `/a/<ADMIN_LINK_SECRET>` в тот же PWA. Минимальный экран `/admin`: заявки (подтвердить/отклонить) и форма рассылки. Плюс admin HTTP API с `ADMIN_TOKEN` и CLI `pushctl` |
 | Хранилище | SQLite (файл в volume) |
-| Деплой | Docker Compose, один контейнер приложения + reverse proxy с HTTPS |
+| Деплой | Docker Compose: сервис `app` на `:8080` + опциональный профиль `edge` с Caddy. Может стоять и на сервере панели, и на отдельном VPS |
 | Панель | Мастер + ноды; приложение знает только мастер |
 
 ## 5. Стек
@@ -112,14 +117,18 @@ cmd/server/          точка входа HTTP-сервера + планиро�
 cmd/pushctl/         CLI: отправка кастомных push через admin API
 internal/config/     загрузка и валидация env
 internal/xui/        HTTP-клиент к панели 3x-ui: типы, вызовы, кэш списка клиентов
-internal/store/      SQLite: миграции, репозитории (sessions, push_subscriptions, notifications, renewal_requests)
-internal/auth/       magic-link, сессии, middleware
+internal/store/      SQLite: миграции, репозитории (sessions, push_subscriptions, renewal_requests, notifications)
+internal/auth/       magic-link клиента и админа, сессии, rate-limit, middleware ролей
 internal/push/       отправка Web Push, VAPID, удаление мёртвых подписок
-internal/notify/     планировщик: проверка истечения/квоты, дедупликация, формирование текстов
+internal/renewal/    сервис продления: планы, интерфейс Payment (manual), транзакция + bulkAdjust + откат
+internal/notify/     планировщик: истечение/квота клиентам, напоминание админу о pending, дедупликация
 internal/httpapi/    handlers, роутинг, admin API, раздача статики
 internal/domain/     модель Subscription, вычисление статуса (чистые функции, без I/O)
-web/                 Vite-приложение (PWA)
-deploy/              docker-compose.yml, Dockerfile, Caddyfile, .env.example
+internal/webdist/    //go:embed собранного фронта; dist/ генерируется Vite (в git только .gitkeep)
+web/                 Vite-приложение (PWA); сборка пишет в ../internal/webdist/dist
+deploy/              docker-compose.yml, Dockerfile, Caddyfile, nginx.example.conf, .env.example, config.example.yaml
+.tools/              переносимый Node (make tools-node), не в git
+Makefile             build / vet / test / check / web / tools-node / compose-*
 .claude/skills/      скиллы для агентов (3x-ui-api)
 AGENT.md             этот файл
 ```
@@ -133,17 +142,44 @@ AGENT.md             этот файл
    срок 90 дней, продлевается при активности), редирект `302 /`.
 3. Эндпоинт защищён rate-limit по IP (например 10 попыток/мин) — subId'ы случайные 16-символьные,
    но перебор всё равно надо душить. Ответ по времени не должен отличаться для «есть/нет».
-4. В БД храним `sub_id` как есть (он нужен для запросов в панель). Email/uuid не храним.
+4. В БД храним `sub_id` как есть (он нужен для запросов в панель). Email хранится только в
+   `renewal_requests` (админу нужно видеть, кто заявил оплату); uuid/password не храним никогда.
+
+**Ссылка подписки = вход в кабинет.** Панель отдаёт по `{subPath}{subId}` base64 VPN-приложениям и
+HTML браузеру (`Accept: text/html`). HTML берётся из `subThemeDir/index.html` — Go `html/template`
+с полями `sId`, `subTitle`, `subUrl`, `expire`, `links`, … (см. docs/custom-subscription-templates.md
+в 3x-ui). Наш шаблон лежит в `internal/subtemplate/index.html`, `server sub-template` / `make sub-template`
+подставляют `APP_BASE_URL` и печатают файл; его копируют на хост панели и указывают путь в
+Sub Theme Directory. Шаблон делает `meta refresh` + `location.replace` на `/s/{{ .sId }}`, cookie
+`SameSite=Lax` переживает cross-site переход. `/api/admin/link` отдаёт `url` = ссылка подписки,
+`cabinetUrl` = прямая ссылка.
+
+**Magic-link админа** — `GET /a/{ADMIN_LINK_SECRET}` → сессия `role=admin` → `302 /admin`. Тот же
+rate-limit. Секрет отдельный от `ADMIN_TOKEN`, чтобы API-токен не попадал в URL и историю браузера.
 
 **Экран подписки** — `GET /api/me`: бэкенд берёт клиента из кэша списка (`clients/list`,
 TTL 30–60 с; панель не должна получать запрос на каждый рендер), считает статус (§3), отдаёт:
 срок, дней осталось, трафик (использовано/квота), `enable`, online (по `clients/onlines`)
 и lastOnline, ссылку подписки и список ссылок (`clients/subLinks/{subId}`) для QR.
 
-**Продление (заглушка)** — `POST /api/renew {plan?}` → запись в `renewal_requests`
-(sub_id, plan, created_at, status=`new`) → `202 {status:"queued"}`. Фронт показывает
-«заявка принята, с вами свяжутся». Будущая реализация — `POST /panel/api/clients/bulkAdjust`
-`{emails:[email], addDays:N}` (не трогает безлимитных, автоматически включает истёкших).
+**Продление по доверию** — `POST /api/renew {planId}`:
+1. План из `config.yaml`; свежий `clients/get/{email}` (не кэш) → `expiryTime`, `email`.
+2. Отказы: `expiryTime == 0` → `409 unlimited`; есть `pending` заявка → `409 pending_exists`.
+3. `addDays = days`, если `expiryTime > now`; иначе `days + ceil((now − expiryTime)/1 день)` —
+   панель сдвигает от текущего `expiryTime`, поэтому истёкшему добавляем «долг». Округление вверх:
+   клиент получает не меньше оплаченного.
+4. Транзакция: `INSERT renewal_requests(status=pending, applied_days, expiry_before)`; частичный
+   уникальный индекс `(sub_id) WHERE status='pending'` защищает от двойного нажатия.
+5. `bulkAdjust {emails:[email], addDays}`. Ошибка → `status=failed`, `502`. Успех → перечитать
+   клиента → `expiry_after`, ответ `200 {expiryTime}`.
+6. Push всем подпискам `role=admin`: «Заявка: {email}, {days} дн, {amount} ₽», `url: /admin`.
+   Нет админских подписок → только лог; заявка всё равно видна в `/admin`.
+
+**Решение админа** — `POST /api/admin/renewals/{id}/confirm|reject`, только для `pending`:
+- confirm → `status=confirmed`, push клиенту «Оплата подтверждена».
+- reject → `bulkAdjust addDays = −applied_days` → перечитать → `status=rejected`, push клиенту
+  «Платёж не найден, продление отменено». Если срок ушёл в прошлое, панель сама выключит клиента.
+  После reject клиент может подать новую заявку.
 
 **Push-подписка** — фронт после жеста пользователя вызывает `PushManager.subscribe`
 с `VAPID_PUBLIC_KEY`, шлёт результат в `POST /api/push/subscribe`. Храним `endpoint` (PK),
@@ -158,31 +194,41 @@ TTL 30–60 с; панель не должна получать запрос н�
    push-подпискам этого sub_id и пишет запись. Ключ включает `expiry_time`, поэтому после
    продления уведомления сработают снова.
 3. Аналогично для трафика: `kind=traffic_90` при `totalGB>0` и `used/totalGB ≥ NOTIFY_TRAFFIC_PCT`.
-4. Панель недоступна → лог warning, пропуск цикла, без ретраев в цикле.
+4. Раз в сутки — напоминание админу о `pending` старше 24 ч (`kind=admin_pending_reminder`,
+   `ref=<request_id>:<date>`).
+5. Панель недоступна → лог warning, пропуск цикла, без ретраев в цикле.
 
-**Кастомные push** — `POST /api/admin/push` с `Authorization: Bearer <ADMIN_TOKEN>`:
-`{title, body, url?, target: {"all":true} | {"subIds":[...]} | {"emails":[...]}}`.
-Синхронно рассылает, отвечает `{sent, failed, removed}` и пишет в `notifications`
-(`kind=custom`). `cmd/pushctl` — тонкая обёртка над этим эндпоинтом.
+**Кастомные push** — форма в `/admin` и `POST /api/admin/push` (cookie `role=admin` или
+`Authorization: Bearer <ADMIN_TOKEN>`): `{title, body, url?, target: {"all":true} | {"subIds":[...]} | {"emails":[...]}}`.
+Синхронно рассылает, отвечает `{recipients, sent, failed, removed, unknownEmails}` и пишет в
+`notifications` (`kind=custom`). `cmd/pushctl` — CLI над admin API: `send`, `pending`, `history`,
+`confirm`, `reject`, `link`, `stats`; читает `APP_BASE_URL`/`ADMIN_TOKEN` из окружения или `.env`.
 
 ## 8. HTTP API приложения (контракт)
 
 | Метод и путь | Auth | Назначение |
 |---|---|---|
-| `GET /s/{subId}` | — | Magic-link: создать сессию, редирект на `/` |
-| `GET /api/me` | cookie | Данные подписки + `vapidPublicKey` + флаг наличия push-подписки |
-| `POST /api/renew` | cookie | Заявка на продление (заглушка) |
-| `POST /api/push/subscribe` | cookie | Сохранить PushSubscription |
-| `DELETE /api/push/subscribe` | cookie | Удалить по `endpoint` |
-| `POST /api/logout` | cookie | Удалить сессию |
-| `POST /api/admin/push` | admin token | Кастомная рассылка |
-| `GET /api/admin/stats` | admin token | Кол-во сессий/push-подписок/уведомлений (для контроля) |
+| `GET /s/{subId}` | — | Magic-link клиента: сессия `client`, редирект на `/` |
+| `GET /a/{secret}` | — | Magic-link админа: сессия `admin`, редирект на `/admin` |
+| `GET /api/me` | client | Данные подписки, `hasPending`, `vapidPublicKey`, `pushSubscribed` |
+| `GET /api/plans` | client | Планы + реквизиты + `hasPending` |
+| `POST /api/renew` | client | «Я перевёл» → мгновенное продление |
+| `GET /api/renewals` | client | Последние 10 своих заявок |
+| `POST /api/push/subscribe` | client/admin | Сохранить PushSubscription |
+| `DELETE /api/push/subscribe` | client/admin | Удалить по `endpoint` |
+| `POST /api/logout` | any | Удалить сессию |
+| `GET /api/admin/renewals?status=pending` | admin | Список заявок |
+| `POST /api/admin/renewals/{id}/confirm` · `/reject` | admin | Решение по заявке |
+| `POST /api/admin/push` | admin | Кастомная рассылка |
+| `GET /api/admin/link?email=` | admin | Ссылка для выдачи клиенту: `url` (ссылка подписки, fallback — прямая) и `cabinetUrl` (`/s/<subId>`) |
+| `GET /api/admin/stats` | admin | Кол-во сессий/push-подписок/заявок |
 | `GET /healthz` | — | Живость + доступность панели (`{panel:"ok"\|"down"}`) |
 | `GET /*` | — | SPA (index.html), `manifest.webmanifest`, `sw.js` |
 
 Ошибки — `{ "error": "code", "message": "человекочитаемо" }` с правильным HTTP-кодом.
 `GET /api/me` при отсутствии/протухшей сессии — `401`; фронт показывает экран
-«откройте ссылку из сообщения администратора».
+«откройте ссылку из сообщения администратора». `403` — сессия есть, но роль не та.
+«admin» в колонке Auth = cookie-сессия `role=admin` **или** `Authorization: Bearer <ADMIN_TOKEN>`.
 
 ## 9. Шпаргалка по API панели (только нужное)
 
@@ -224,11 +270,14 @@ TTL 30–60 с; панель не должна получать запрос н�
 | `NODE_TLS_INSECURE` | нет | `1` — не проверять сертификат панели (только если самоподписанный) |
 | `APP_BASE_URL` | да | Публичный URL приложения, напр. `https://cab.example.com` (для magic-link и push `url`) |
 | `SUB_BASE_URL` | нет | База ссылки подписки, напр. `https://sub.example.com:2096/sub/`; пусто → читать из `setting/all` |
-| `ADMIN_TOKEN` | да | Токен для `/api/admin/*`, ≥32 случайных байт |
+| `ADMIN_TOKEN` | да | Bearer-токен для `/api/admin/*` (CLI), ≥32 случайных байт |
+| `ADMIN_LINK_SECRET` | да | Секрет ссылки входа админа `/a/<secret>`, ≥32 случайных байт, отдельный от `ADMIN_TOKEN` |
+| `CONFIG_PATH` | нет | Путь к `config.yaml` (планы, реквизиты, тексты); по умолчанию `/data/config.yaml` |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | да | Ключи Web Push; `VAPID_SUBJECT` = `mailto:…` |
 | `SESSION_SECRET` | да | Для подписи cookie |
 | `DB_PATH` | нет | По умолчанию `/data/app.db` |
 | `LISTEN_ADDR` | нет | По умолчанию `:8080` |
+| `TRUST_PROXY` | нет | `1` (по умолчанию) — IP клиента брать из `X-Forwarded-For`/`X-Real-IP`; ставить `0`, если приложение смотрит в интернет напрямую |
 | `POLL_INTERVAL` | нет | По умолчанию `10m` |
 | `NOTIFY_DAYS` | нет | По умолчанию `7,3,1` |
 | `NOTIFY_TRAFFIC_PCT` | нет | По умолчанию `90` |
@@ -271,19 +320,50 @@ TTL 30–60 с; панель не должна получать запрос н�
 
 **Перед завершением задачи**
 ```
-go build ./... && go vet ./... && go test ./...
-cd web && npm run build && npm run typecheck
+make check          # go vet + go test + go build + typecheck фронта
+make web            # полная сборка фронта в internal/webdist/dist (перед сборкой бинарника/образа)
 ```
-Если что-то падает — сообщить с выводом, не маскировать.
+Node в системе может отсутствовать: `make tools-node` скачивает переносимый Node 22 для текущей
+ОС/архитектуры (Linux/macOS, x64/arm64) в `.tools/node`, `make web` подхватывает его автоматически.
+`.tools/` и `web/node_modules/` привязаны к платформе: при переносе проекта на другую машину
+повторить `make tools-node` и `make web`. Makefile совместим с GNU make 3.81 (macOS по умолчанию). Docker на машине разработчика может быть без прав —
+образ собирается на сервере. Если что-то падает — сообщить с выводом, не маскировать.
+
+**Локальный запуск** — `.env` содержит только `NODE_URL`/`NODE_API_TOKEN`; остальные переменные
+(§10) для dev-запуска задаются в оболочке, `CONFIG_PATH=deploy/config.example.yaml`,
+`DB_PATH` — во временный файл, `LISTEN_ADDR=127.0.0.1:18080`.
 
 **Документация**
 - Любое изменение архитектурного решения → обновить этот файл (§4, §5, §7, §8, §10) и добавить
   строку в §14. Не оставлять устаревшие утверждения.
 
+## 12a. Состояние реализации (2026-09-16)
+
+Все вехи плана M0–M6 реализованы и покрыты тестами (`make check` зелёный):
+
+| Веха | Что есть |
+|---|---|
+| M0 | Каркас: config (env + yaml), store (SQLite, миграции), xui-клиент с retry и кэшем, domain, httpapi, embed фронта, Dockerfile/compose/Makefile |
+| M1 | Magic-link клиента и админа, подписанные cookie-сессии, rate-limit, `/api/me`, экран подписки с QR |
+| M2 | Web Push: `gen-vapid`, отправка с удалением мёртвых endpoint'ов, subscribe-эндпоинты, переключатель во фронте |
+| M3 | Продление по доверию: `/api/plans`, `/api/renew`, confirm/reject с откатом, экраны `/renew` и `/admin` |
+| M4 | Планировщик: пороги истечения, трафик, напоминание админу о pending > 24 ч, дедупликация |
+| M5 | Рассылка: `POST /api/admin/push`, форма в админке, CLI `pushctl` |
+| M6 | README, `make backup`, nginx-пример, Caddy-профиль |
+
+Шаблон страницы подписки (`internal/subtemplate`) проверен только тестом через `html/template`;
+на панель ещё не установлен (нужно скопировать файл на хост панели и задать Sub Theme Directory).
+Не проверено на реальной панели (нужен тестовый клиент от владельца): семантика `bulkAdjust`
+(сдвиг от `expiryTime` или от «сейчас»), форма ответа `bulkAdjust`, доставка push на iOS.
+Проверено на реальной панели: magic-link → `/api/me` с настоящими данными, ссылка подписки из
+`setting/all`, вход админа, `/api/admin/link`.
+
 ## 13. Открытые вопросы
 
-- Механизм продления: платёжный провайдер, тарифы (где хранятся, кто редактирует), что именно
-  добавляет продление — дни, трафик или оба.
+- Онлайн-оплата: провайдер выбирается, когда у владельца появится юридический статус
+  (самозанятость/ИП). До этого — ручная оплата по доверию.
+- Семантика `bulkAdjust`: сдвигает от текущего `expiryTime` или от «сейчас»? Проверить на тестовом
+  клиенте в M3; от ответа зависит расчёт «долга» в §7.
 - Показывать ли клиенту состояние нод/серверов (`nodes/list`) — полезно, но раскрывает топологию.
 - Нужен ли клиенту выбор между ссылкой подписки и отдельными ссылками по протоколам.
 - Мультиязычность интерфейса (сейчас только русский).
@@ -296,3 +376,17 @@ cd web && npm run build && npm run typecheck
   продление как заглушка, только Web Push (VAPID), admin API + CLI для рассылок, SQLite +
   Docker Compose, стек Go + React/Vite. Проверено на живой панели: версия 3.6.x, мастер + 7 нод,
   новый API `/panel/api/clients/*` доступен, поиск по subId через `list/paged?search=`.
+- 2026-09-16 — Спланирована архитектура (план `~/.claude/plans/jaunty-wibbling-crane.md`). Продление
+  из заглушки стало потоком по доверию с мгновенным `bulkAdjust`, одной pending-заявкой и откатом.
+  Тарифы и реквизиты — в `config.yaml`. Появился минимальный экран `/admin` и вход админа по
+  `/a/<secret>`; уведомления админу — Web Push в тот же PWA. Деплой — compose с опциональным Caddy.
+- 2026-09-18 — Клиенту выдаётся одна ссылка — ссылка подписки панели. Браузерный вариант
+  страницы подписки заменяется нашим шаблоном (`subThemeDir`), который редиректит на
+  `/s/<subId>`. Добавлены `internal/subtemplate`, `server sub-template`, `make sub-template`;
+  `/api/admin/link` и `pushctl link` отдают ссылку подписки первой.
+- 2026-09-18 — Проект перенесён на macOS (arm64). Makefile переведён на табы (make 3.81),
+  `tools-node` определяет ОС/архитектуру. В `renewal.Service` добавлен `SetClock` — тест продления
+  с просрочкой зависел от реального времени и падал через два дня после написания.
+- 2026-09-16 — Реализованы вехи M0–M6 (см. §12a). Модуль `github.com/amarseillaise/3x-ui-cm`,
+  Go 1.26, Vite 7 + React 19, Tailwind 4, vite-plugin-pwa 1.x. Добавлены `TRUST_PROXY`,
+  `ADMIN_LINK_SECRET`, `CONFIG_PATH`; Node берётся из `.tools/node` (`make tools-node`).

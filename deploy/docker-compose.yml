@@ -1,0 +1,47 @@
+# Run from the repository root so relative paths resolve:
+#   docker compose --project-directory . -f deploy/docker-compose.yml up -d --build
+# Add "--profile edge" to also start Caddy (needs APP_DOMAIN in .env and free ports 80/443).
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    image: xui-cm:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DB_PATH: /data/app.db
+      CONFIG_PATH: /config/config.yaml
+      LISTEN_ADDR: ":8080"
+    volumes:
+      - app_data:/data
+      - ./config.yaml:/config/config.yaml:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    profiles: ["edge"]
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:

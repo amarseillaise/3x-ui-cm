@@ -1,0 +1,15 @@
+# Copy to the repository root as config.yaml (mounted read-only into the container).
+# Plans and requisites are shown to clients as-is. Amounts are whole units of `currency`.
+currency: RUB
+
+plans:
+  - { id: p30,  title: "30 дней",  days: 30,  price: 180 }
+  - { id: p90,  title: "90 дней",  days: 90,  price: 500 }
+  - { id: p180, title: "180 дней", days: 180, price: 960 }
+
+requisites:
+  - label: "СБП по номеру телефона"
+    value: "+7 9XX XXX-XX-XX"
+    note: "Т-Банк, получатель Марсель К."
+
+payment_note: "После перевода нажмите «Я перевёл» — подписка продлится сразу. Администратор сверит платёж позже."
