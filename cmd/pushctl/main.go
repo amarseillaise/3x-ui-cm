@@ -38,9 +38,14 @@ func main() {
 		os.Exit(2)
 	}
 	loadDotEnv(".env")
-	c := &client{base: strings.TrimRight(os.Getenv("APP_BASE_URL"), "/"), token: os.Getenv("ADMIN_TOKEN"), http: &http.Client{Timeout: 60 * time.Second}}
+	c := &client{
+		base:  strings.TrimRight(os.Getenv("APP_BASE_URL"), "/"),
+		token: os.Getenv("ADMIN_TOKEN"),
+		http:  &http.Client{Timeout: 60 * time.Second},
+	}
 	if c.base == "" || c.token == "" {
-		fmt.Fprintln(os.Stderr, "error: APP_BASE_URL and ADMIN_TOKEN must be set (env or .env)")
+		err_text := "error: APP_BASE_URL and ADMIN_TOKEN must be set (env or .env)"
+		fmt.Fprintln(os.Stderr, err_text)
 		os.Exit(2)
 	}
 	var err error
@@ -108,7 +113,14 @@ func (c *client) send(args []string) error {
 	default:
 		return errors.New("choose a target: -all, -sub or -email")
 	}
-	return c.printJSON(http.MethodPost, "/api/admin/push", map[string]any{"title": *title, "body": *body, "url": *url, "target": target})
+	path := "/api/admin/push"
+	jsonBody := map[string]any{
+		"title":  *title,
+		"body":   *body,
+		"url":    *url,
+		"target": target,
+	}
+	return c.printJSON(http.MethodPost, path, jsonBody)
 }
 
 func (c *client) list(status string, limit int) error {
@@ -135,13 +147,19 @@ func (c *client) list(status string, limit int) error {
 	}
 	w := bufio.NewWriter(os.Stdout)
 	defer w.Flush()
-	fmt.Fprintf(w, "%-6s %-10s %-20s %-12s %8s %5s  %s\n", "ID", "STATUS", "CREATED", "PLAN", "AMOUNT", "DAYS", "EMAIL")
+	fmt.Fprintf(w,
+		"%-6s %-10s %-20s %-12s %8s %5s  %s\n",
+		"ID", "STATUS", "CREATED", "PLAN", "AMOUNT", "DAYS", "EMAIL",
+	)
 	for _, r := range out.Requests {
 		created := r.CreatedAt
 		if t, err := time.Parse(time.RFC3339, r.CreatedAt); err == nil {
 			created = t.Local().Format("2006-01-02 15:04")
 		}
-		fmt.Fprintf(w, "%-6d %-10s %-20s %-12s %5d %s %5d  %s", r.ID, r.Status, created, r.PlanTitle, r.Amount, r.Currency, r.AppliedDays, r.Email)
+		fmt.Fprintf(w,
+			"%-6d %-10s %-20s %-12s %5d %s %5d  %s",
+			r.ID, r.Status, created, r.PlanTitle, r.Amount, r.Currency, r.AppliedDays, r.Email,
+		)
 		if r.Error != "" {
 			fmt.Fprintf(w, "  [%s]", r.Error)
 		}
@@ -151,7 +169,8 @@ func (c *client) list(status string, limit int) error {
 }
 
 func (c *client) resolve(id, action string) error {
-	return c.printJSON(http.MethodPost, "/api/admin/renewals/"+id+"/"+action, nil)
+	path := fmt.Sprintf("/api/admin/renewals/%s/%s", id, action)
+	return c.printJSON(http.MethodPost, path, nil)
 }
 
 func (c *client) link(email string) error {
@@ -162,7 +181,8 @@ func (c *client) link(email string) error {
 		URL        string `json:"url"`
 		CabinetURL string `json:"cabinetUrl"`
 	}
-	if err := c.call(http.MethodGet, "/api/admin/link?email="+urlQueryEscape(email), nil, &out); err != nil {
+	path := "/api/admin/link?email=" + urlQueryEscape(email)
+	if err := c.call(http.MethodGet, path, nil, &out); err != nil {
 		return err
 	}
 	fmt.Println(out.URL)
