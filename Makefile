@@ -4,7 +4,7 @@ COMPOSE := docker compose --project-directory . -f deploy/docker-compose.yml
 NODE_VERSION ?= v22
 NODE_BIN := $(if $(wildcard .tools/node/bin/node),$(CURDIR)/.tools/node/bin:,)
 
-.PHONY: build vet test check web web-typecheck tools-node run migrate compose-up compose-edge-up compose-down compose-logs backup gen-secrets sub-template
+.PHONY: build vet test check web web-typecheck tools-node run migrate compose-up compose-edge-up compose-down compose-logs backup gen-secrets sub-template nginx-config
 
 build:
 	go build ./...
@@ -63,6 +63,11 @@ backup:
 sub-template:
 	mkdir -p sub_template && go run ./cmd/server sub-template > sub_template/index.html \
 	  && echo "sub_template/index.html: copy to the panel host (e.g. /etc/3x-ui/sub_templates/cabinet/) and set Sub Theme Directory"
+
+## Render the nginx server block for this deployment (needs APP_BASE_URL and cert paths).
+nginx-config:
+	mkdir -p deploy/nginx && go run ./cmd/server nginx-config > deploy/nginx/cabinet.conf \
+	  && echo "deploy/nginx/cabinet.conf: install it with sudo deploy/install-nginx.sh"
 
 ## Print fresh secrets for .env.
 gen-secrets:

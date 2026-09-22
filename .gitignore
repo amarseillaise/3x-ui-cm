@@ -52,5 +52,8 @@ internal/webdist/dist/*
 # Rendered panel template (make sub-template)
 /sub_template/
 
+# Rendered nginx server block (make nginx-config)
+/deploy/nginx/
+
 # macOS
 .DS_Store

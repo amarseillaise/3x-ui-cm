@@ -4,11 +4,13 @@
 //	server migrate    apply database migrations and exit
 //	server gen-vapid  print a fresh VAPID key pair for .env
 //	server sub-template  print the 3x-ui subscription-page template for APP_BASE_URL
+//	server nginx-config  print the nginx server block for APP_BASE_URL
 package main
 
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/amarseillaise/3x-ui-cm/internal/config"
 	"github.com/amarseillaise/3x-ui-cm/internal/httpapi"
+	"github.com/amarseillaise/3x-ui-cm/internal/nginxconf"
 	"github.com/amarseillaise/3x-ui-cm/internal/notify"
 	"github.com/amarseillaise/3x-ui-cm/internal/push"
 	"github.com/amarseillaise/3x-ui-cm/internal/store"
@@ -42,6 +45,8 @@ func main() {
 		err = genVAPID()
 	case "sub-template":
 		err = subTemplate()
+	case "nginx-config":
+		err = nginxConfig(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -55,7 +60,32 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: server [serve|migrate|gen-vapid|sub-template]")
+	fmt.Fprintln(os.Stderr, "usage: server [serve|migrate|gen-vapid|sub-template|nginx-config]")
+}
+
+// nginxConfig prints the nginx server block for this deployment. Like
+// sub-template it needs APP_BASE_URL only, so the full env is not validated.
+func nginxConfig(args []string) error {
+	fs := flag.NewFlagSet("nginx-config", flag.ContinueOnError)
+	cert := fs.String("cert", os.Getenv("NGINX_CERT_FILE"), "path to fullchain.pem on the nginx host")
+	key := fs.String("key", os.Getenv("NGINX_KEY_FILE"), "path to privkey.pem on the nginx host")
+	upstream := fs.String("upstream", nginxconf.DefaultUpstream, "address the app listens on")
+	redirect := fs.Bool("redirect-http", false, "also emit a port 80 block redirecting to https")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := nginxconf.FromAppBaseURL(os.Getenv("APP_BASE_URL"), *cert, *key)
+	if err != nil {
+		return err
+	}
+	cfg.Upstream = *upstream
+	cfg.RedirectHTTP = *redirect
+	out, err := nginxconf.Render(cfg)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stdout.WriteString(out)
+	return err
 }
 
 // subTemplate prints the panel template that redirects the subscription URL
