@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/amarseillaise/3x-ui-cm/internal/store/queries"
+
 	_ "modernc.org/sqlite" // registers the "sqlite" driver
 )
 
@@ -58,11 +60,11 @@ func (s *Store) Close() error { return s.db.Close() }
 // Migrate applies embedded migrations that have not been applied yet and
 // returns how many were applied.
 func (s *Store) Migrate(ctx context.Context) (int, error) {
-	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
+	if _, err := s.db.ExecContext(ctx, queries.Q.MigrationCreateTable); err != nil {
 		return 0, err
 	}
 	applied := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	rows, err := s.db.QueryContext(ctx, queries.Q.MigrationListApplied)
 	if err != nil {
 		return 0, err
 	}
@@ -105,7 +107,7 @@ func (s *Store) Migrate(ctx context.Context) (int, error) {
 			_ = tx.Rollback()
 			return n, fmt.Errorf("migration %s: %w", name, err)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, name, nowMs()); err != nil {
+		if _, err := tx.ExecContext(ctx, queries.Q.MigrationRecord, name, nowMs()); err != nil {
 			_ = tx.Rollback()
 			return n, err
 		}

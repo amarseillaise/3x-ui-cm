@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/amarseillaise/3x-ui-cm/internal/store/queries"
 )
 
 // Session roles.
@@ -24,8 +26,7 @@ type Session struct {
 
 // CreateSession inserts a new session.
 func (s *Store) CreateSession(ctx context.Context, sess Session) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, role, sub_id, created_at, last_seen_at, user_agent) VALUES (?, ?, ?, ?, ?, ?)`,
+	_, err := s.db.ExecContext(ctx, queries.Q.SessionInsert,
 		sess.ID, sess.Role, sess.SubID, sess.CreatedAt, sess.LastSeenAt, sess.UserAgent)
 	return err
 }
@@ -33,8 +34,7 @@ func (s *Store) CreateSession(ctx context.Context, sess Session) error {
 // GetSession returns a session by id or ErrNotFound.
 func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	var sess Session
-	err := s.db.QueryRowContext(ctx,
-		`SELECT id, role, sub_id, created_at, last_seen_at, user_agent FROM sessions WHERE id = ?`, id).
+	err := s.db.QueryRowContext(ctx, queries.Q.SessionGet, id).
 		Scan(&sess.ID, &sess.Role, &sess.SubID, &sess.CreatedAt, &sess.LastSeenAt, &sess.UserAgent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -47,19 +47,19 @@ func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 
 // TouchSession updates last_seen_at.
 func (s *Store) TouchSession(ctx context.Context, id string, at int64) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE sessions SET last_seen_at = ? WHERE id = ?`, at, id)
+	_, err := s.db.ExecContext(ctx, queries.Q.SessionTouch, at, id)
 	return err
 }
 
 // DeleteSession removes a session; deleting a missing session is not an error.
 func (s *Store) DeleteSession(ctx context.Context, id string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE id = ?`, id)
+	_, err := s.db.ExecContext(ctx, queries.Q.SessionDelete, id)
 	return err
 }
 
 // DeleteSessionsIdleBefore removes sessions not seen since the given time.
 func (s *Store) DeleteSessionsIdleBefore(ctx context.Context, lastSeenBefore int64) (int64, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM sessions WHERE last_seen_at < ?`, lastSeenBefore)
+	res, err := s.db.ExecContext(ctx, queries.Q.SessionDeleteIdle, lastSeenBefore)
 	if err != nil {
 		return 0, err
 	}
@@ -69,6 +69,6 @@ func (s *Store) DeleteSessionsIdleBefore(ctx context.Context, lastSeenBefore int
 // CountSessions returns the number of sessions.
 func (s *Store) CountSessions(ctx context.Context) (int64, error) {
 	var n int64
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions`).Scan(&n)
+	err := s.db.QueryRowContext(ctx, queries.Q.SessionCount).Scan(&n)
 	return n, err
 }

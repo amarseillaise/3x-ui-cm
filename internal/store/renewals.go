@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+
+	"github.com/amarseillaise/3x-ui-cm/internal/store/queries"
 )
 
 // Renewal request statuses.
@@ -33,8 +35,6 @@ type RenewalRequest struct {
 	Error        string
 }
 
-const renewalColumns = `id, sub_id, email, plan_id, days, amount, currency, status, applied_days, expiry_before, expiry_after, created_at, resolved_at, resolved_by, error`
-
 func scanRenewal(sc interface{ Scan(...any) error }) (*RenewalRequest, error) {
 	var r RenewalRequest
 	err := sc.Scan(&r.ID, &r.SubID, &r.Email, &r.PlanID, &r.Days, &r.Amount, &r.Currency, &r.Status,
@@ -48,9 +48,7 @@ func scanRenewal(sc interface{ Scan(...any) error }) (*RenewalRequest, error) {
 // CreateRenewal inserts a request and sets r.ID. A second pending request for
 // the same subscription returns ErrPendingExists.
 func (s *Store) CreateRenewal(ctx context.Context, r *RenewalRequest) error {
-	res, err := s.db.ExecContext(ctx, `
-		INSERT INTO renewal_requests (sub_id, email, plan_id, days, amount, currency, status, applied_days, expiry_before, expiry_after, created_at, resolved_at, resolved_by, error)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '', '')`,
+	res, err := s.db.ExecContext(ctx, queries.Q.RenewalInsert,
 		r.SubID, r.Email, r.PlanID, r.Days, r.Amount, r.Currency, r.Status, r.AppliedDays, r.ExpiryBefore, r.ExpiryAfter, r.CreatedAt)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -64,7 +62,7 @@ func (s *Store) CreateRenewal(ctx context.Context, r *RenewalRequest) error {
 
 // GetRenewal returns a request by id or ErrNotFound.
 func (s *Store) GetRenewal(ctx context.Context, id int64) (*RenewalRequest, error) {
-	r, err := scanRenewal(s.db.QueryRowContext(ctx, `SELECT `+renewalColumns+` FROM renewal_requests WHERE id = ?`, id))
+	r, err := scanRenewal(s.db.QueryRowContext(ctx, queries.Q.RenewalGet, id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -73,25 +71,20 @@ func (s *Store) GetRenewal(ctx context.Context, id int64) (*RenewalRequest, erro
 
 // ListRenewals returns the newest requests, optionally filtered by status ("" = all).
 func (s *Store) ListRenewals(ctx context.Context, status string, limit int) ([]RenewalRequest, error) {
-	q := `SELECT ` + renewalColumns + ` FROM renewal_requests`
-	var args []any
-	if status != "" {
-		q += ` WHERE status = ?`
-		args = append(args, status)
+	if status == "" {
+		return s.queryRenewals(ctx, queries.Q.RenewalList, limit)
 	}
-	q += ` ORDER BY created_at DESC, id DESC LIMIT ?`
-	args = append(args, limit)
-	return s.queryRenewals(ctx, q, args...)
+	return s.queryRenewals(ctx, queries.Q.RenewalListByStatus, status, limit)
 }
 
 // ListRenewalsBySubID returns the newest requests of one subscription.
 func (s *Store) ListRenewalsBySubID(ctx context.Context, subID string, limit int) ([]RenewalRequest, error) {
-	return s.queryRenewals(ctx, `SELECT `+renewalColumns+` FROM renewal_requests WHERE sub_id = ? ORDER BY created_at DESC, id DESC LIMIT ?`, subID, limit)
+	return s.queryRenewals(ctx, queries.Q.RenewalListBySub, subID, limit)
 }
 
 // ListPendingRenewalsBefore returns pending requests created before the given time.
 func (s *Store) ListPendingRenewalsBefore(ctx context.Context, createdBefore int64) ([]RenewalRequest, error) {
-	return s.queryRenewals(ctx, `SELECT `+renewalColumns+` FROM renewal_requests WHERE status = ? AND created_at < ? ORDER BY created_at`, RenewalPending, createdBefore)
+	return s.queryRenewals(ctx, queries.Q.RenewalListPendingBefore, RenewalPending, createdBefore)
 }
 
 func (s *Store) queryRenewals(ctx context.Context, q string, args ...any) ([]RenewalRequest, error) {
@@ -114,21 +107,20 @@ func (s *Store) queryRenewals(ctx context.Context, q string, args ...any) ([]Ren
 // HasPendingRenewal reports whether the subscription has an unconfirmed request.
 func (s *Store) HasPendingRenewal(ctx context.Context, subID string) (bool, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM renewal_requests WHERE sub_id = ? AND status = ?`, subID, RenewalPending).Scan(&n)
+	err := s.db.QueryRowContext(ctx, queries.Q.RenewalCountPendingForSub, subID, RenewalPending).Scan(&n)
 	return n > 0, err
 }
 
 // SetRenewalOutcome records the panel write result right after the request was created.
 func (s *Store) SetRenewalOutcome(ctx context.Context, id int64, status string, expiryAfter int64, errMsg string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE renewal_requests SET status = ?, expiry_after = ?, error = ? WHERE id = ?`, status, expiryAfter, errMsg, id)
+	_, err := s.db.ExecContext(ctx, queries.Q.RenewalSetOutcome, status, expiryAfter, errMsg, id)
 	return err
 }
 
 // ResolveRenewal moves a pending request to confirmed/rejected. Returns
 // ErrNotPending if the request was already resolved or does not exist.
 func (s *Store) ResolveRenewal(ctx context.Context, id int64, status, resolvedBy string, at int64, expiryAfter int64) error {
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE renewal_requests SET status = ?, resolved_at = ?, resolved_by = ?, expiry_after = CASE WHEN ? > 0 THEN ? ELSE expiry_after END WHERE id = ? AND status = ?`,
+	res, err := s.db.ExecContext(ctx, queries.Q.RenewalResolve,
 		status, at, resolvedBy, expiryAfter, expiryAfter, id, RenewalPending)
 	if err != nil {
 		return err
@@ -145,7 +137,7 @@ func (s *Store) ResolveRenewal(ctx context.Context, id int64, status, resolvedBy
 
 // CountRenewals returns counts per status.
 func (s *Store) CountRenewals(ctx context.Context) (map[string]int64, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM renewal_requests GROUP BY status`)
+	rows, err := s.db.QueryContext(ctx, queries.Q.RenewalCountByStatus)
 	if err != nil {
 		return nil, err
 	}
