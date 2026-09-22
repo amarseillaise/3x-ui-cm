@@ -118,6 +118,9 @@ cmd/pushctl/         CLI: отправка кастомных push через ad
 internal/config/     загрузка и валидация env
 internal/xui/        HTTP-клиент к панели 3x-ui: типы, вызовы, кэш списка клиентов
 internal/store/      SQLite: миграции, репозитории (sessions, push_subscriptions, renewal_requests, notifications)
+internal/store/queries/  все SQL-запросы в .sql-файлах, встроены через go:embed; в Go только имена
+internal/subtemplate/    шаблон страницы подписки 3x-ui, ведущий в кабинет (server sub-template)
+internal/nginxconf/      генерация nginx-блока из APP_BASE_URL (server nginx-config)
 internal/auth/       magic-link клиента и админа, сессии, rate-limit, middleware ролей
 internal/push/       отправка Web Push, VAPID, удаление мёртвых подписок
 internal/renewal/    сервис продления: планы, интерфейс Payment (manual), транзакция + bulkAdjust + откат
@@ -127,6 +130,7 @@ internal/domain/     модель Subscription, вычисление стату�
 internal/webdist/    //go:embed собранного фронта; dist/ генерируется Vite (в git только .gitkeep)
 web/                 Vite-приложение (PWA); сборка пишет в ../internal/webdist/dist
 deploy/              docker-compose.yml, Dockerfile, Caddyfile, nginx.example.conf, .env.example, config.example.yaml
+deploy/install-nginx.sh  установка сгенерированного блока: бэкап, nginx -t, reload, проверка порта
 .tools/              переносимый Node (make tools-node), не в git
 Makefile             build / vet / test / check / web / tools-node / compose-*
 .claude/skills/      скиллы для агентов (3x-ui-api)
@@ -353,10 +357,28 @@ Node в системе может отсутствовать: `make tools-node` 
 
 Шаблон страницы подписки (`internal/subtemplate`) проверен только тестом через `html/template`;
 на панель ещё не установлен (нужно скопировать файл на хост панели и задать Sub Theme Directory).
-Не проверено на реальной панели (нужен тестовый клиент от владельца): семантика `bulkAdjust`
+Проверено на бою 2026-09-22: рассылка доходит до FCM; доставка на iOS чинится нормализацией
+`VAPID_SUBJECT` (см. §14). Не проверено на реальной панели (нужен тестовый клиент от владельца): семантика `bulkAdjust`
 (сдвиг от `expiryTime` или от «сейчас»), форма ответа `bulkAdjust`, доставка push на iOS.
 Проверено на реальной панели: magic-link → `/api/me` с настоящими данными, ссылка подписки из
 `setting/all`, вход админа, `/api/admin/link`.
+
+## 12b. Правила по коду
+
+**SQL.** Ни одного SQL-литерала в `.go`. Запросы живут в `internal/store/queries/*.sql`, каждый
+начинается со строки `-- name: <ключ>`; комментарий между запросами документирует следующий и
+отбрасывается, заметку к запросу пишут после его `-- name:`. При старте пакета ключи привязываются
+к полям `queries.Set`; недостающий ключ или поле без ключа роняют процесс сразу, а не при первом
+обращении к базе. В коде — `queries.Q.PushList`. Формат `%s` допустим только в двух запросах со
+списком `IN (...)`, туда подставляются лишь знаки вопроса, значения всегда биндятся параметрами.
+
+**Тесты.** Живут рядом с кодом, как принято в Go: только так они видят непубличные функции
+(`sign`, `verify`, `loadEnv`, `panelHealthy`, `expiryMessage`, `sendOne`). Отдельный каталог
+`tests/` не заводим — решение владельца от 2026-09-22 делать идиоматично для языка.
+
+**Блокировки.** Никогда не держать мьютекс во время сетевого вызова к панели. Кэш читается и
+пишется под замком, сам запрос идёт снаружи; одновременный запрос отдаёт прошлое значение либо
+ждёт общий результат через канал. См. `panelHealthy` и `subscriptionURL`.
 
 ## 13. Открытые вопросы
 
@@ -380,6 +402,20 @@ Node в системе может отсутствовать: `make tools-node` 
   из заглушки стало потоком по доверию с мгновенным `bulkAdjust`, одной pending-заявкой и откатом.
   Тарифы и реквизиты — в `config.yaml`. Появился минимальный экран `/admin` и вход админа по
   `/a/<secret>`; уведомления админу — Web Push в тот же PWA. Деплой — compose с опциональным Caddy.
+- 2026-09-22 — Настройка nginx автоматизирована. `server nginx-config` выводит блок из
+  `APP_BASE_URL` и путей к сертификату, `deploy/install-nginx.sh` кладёт его, откатывает при
+  отказе `nginx -t` и после reload проверяет, что порт занял именно nginx: без этой проверки
+  занятый порт выглядит как успешная установка. Выпуск сертификата не трогаем, здесь его делает
+  acme.sh, и в её `Le_ReloadCmd` уже есть `systemctl reload nginx`.
+- 2026-09-22 — Рефакторинг. Весь SQL вынесен в `internal/store/queries/*.sql` с именованными
+  запросами и проверкой связывания при старте. Мьютексы `healthMu` и `subMu` больше не
+  удерживаются на время обращения к панели: медленная панель не выстраивает клиентов в очередь,
+  добавлен регрессионный тест `TestSlowPanelDoesNotSerializeClients`. Тесты оставлены рядом с
+  кодом по соглашению Go.
+- 2026-09-22 — Исправлена доставка push на iOS. `webpush-go` сам дописывает `mailto:` к subject,
+  не начинающемуся с `https:`, поэтому документированный `VAPID_SUBJECT=mailto:…` уходил в токен
+  как `mailto:mailto:…`. FCM это глотал, Apple отвечал 403 и не доставлял ничего. Добавлена
+  нормализация в `push.New` (`normalizeSubject`), принимаются обе формы и https-URL.
 - 2026-09-18 — Клиенту выдаётся одна ссылка — ссылка подписки панели. Браузерный вариант
   страницы подписки заменяется нашим шаблоном (`subThemeDir`), который редиректит на
   `/s/<subId>`. Добавлены `internal/subtemplate`, `server sub-template`, `make sub-template`;
