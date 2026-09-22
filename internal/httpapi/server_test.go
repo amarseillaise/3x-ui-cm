@@ -34,9 +34,12 @@ var defaultExpiry = time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 
 // panelState is the mutable part of the fake panel.
 type panelState struct {
-	mu          sync.Mutex
-	expiry      int64
-	bulkAdjusts []int // addDays values received
+	mu            sync.Mutex
+	expiry        int64
+	bulkAdjusts   []int // addDays values received
+	settingsDelay time.Duration
+	settingsFail  bool
+	settingsCalls int
 }
 
 // fakePanel serves the subset of the 3x-ui API the handlers use.
@@ -88,6 +91,17 @@ func fakePanel(t *testing.T, state *panelState) *httptest.Server {
 		case r.URL.Path == "/panel/api/clients/onlines":
 			io.WriteString(w, `{"success":true,"msg":"","obj":["alice"]}`)
 		case r.URL.Path == "/panel/api/setting/all":
+			state.mu.Lock()
+			delay, fail := state.settingsDelay, state.settingsFail
+			state.settingsCalls++
+			state.mu.Unlock()
+			if delay > 0 {
+				time.Sleep(delay)
+			}
+			if fail {
+				w.WriteHeader(http.StatusBadGateway)
+				return
+			}
 			io.WriteString(w, `{"success":true,"msg":"","obj":{"subEnable":true,"subPort":7115,"subPath":"/subway/","subDomain":"sub.example.com","subCertFile":"/c.crt","subURI":""}}`)
 		default:
 			t.Errorf("unexpected panel call %s %s", r.Method, r.URL.Path)
@@ -543,5 +557,60 @@ func TestAdminBroadcast(t *testing.T) {
 	}
 	if n, _ := e.store.CountNotifications(context.Background()); n != 2 {
 		t.Errorf("notifications logged = %d", n)
+	}
+}
+
+// A slow or broken panel must not serialize every client request behind it:
+// the subscription URL is read once at a time, never under a held lock.
+func TestSlowPanelDoesNotSerializeClients(t *testing.T) {
+	e := newEnv(t)
+	e.panel.mu.Lock()
+	e.panel.settingsDelay = 100 * time.Millisecond
+	e.panel.settingsFail = true // nothing gets cached, the worst case
+	e.panel.mu.Unlock()
+	e.get(t, "/s/abc123xyz")
+
+	const callers = 4
+	start := time.Now()
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if res := e.get(t, "/api/me"); res.StatusCode != http.StatusOK {
+				t.Errorf("/api/me: %d", res.StatusCode)
+			}
+		}()
+	}
+	wg.Wait()
+	elapsed := time.Since(start)
+
+	// One shared read costs the delay plus the client's single retry (~700ms).
+	// Serialized, all four would cost four times that.
+	if elapsed > 1500*time.Millisecond {
+		t.Errorf("%d concurrent requests took %v: they queued behind the panel", callers, elapsed)
+	}
+	e.panel.mu.Lock()
+	calls := e.panel.settingsCalls
+	e.panel.mu.Unlock()
+	// One read, one retry. Without single-flight it would be two per caller.
+	if calls >= 2*callers {
+		t.Errorf("panel was asked %d times for %d requests: no single-flight", calls, callers)
+	}
+}
+
+// A client that gives up must not leave the cached panel verdict broken.
+func TestHealthzProbeSurvivesClientCancel(t *testing.T) {
+	e := newEnv(t)
+	for i := 0; i < 3; i++ {
+		res := e.get(t, "/healthz")
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("healthz: %d", res.StatusCode)
+		}
+		var out map[string]string
+		decode(t, res, &out)
+		if out["panel"] != "ok" {
+			t.Errorf("panel = %q, want ok", out["panel"])
+		}
 	}
 }

@@ -44,13 +44,19 @@ type Server struct {
 	links    *auth.Limiter
 	now      func() time.Time
 
-	healthMu sync.Mutex
-	healthAt time.Time
-	healthOK bool
+	// healthMu guards the cached panel health only. The probe itself runs
+	// outside the lock: holding a mutex across a panel call would make every
+	// request wait for the slowest one.
+	healthMu    sync.Mutex
+	healthAt    time.Time
+	healthOK    bool
+	healthProbe chan struct{} // non-nil while a probe is in flight
 
+	// subMu guards the cached subscription base URL, with the same rule.
 	subMu     sync.Mutex
 	subBase   string
 	subBaseAt time.Time
+	subLoad   chan struct{} // non-nil while panel settings are being read
 }
 
 // New builds the server and registers routes.
@@ -128,43 +134,97 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "panel": panel})
 }
 
-// panelHealthy probes the panel at most every 30 seconds.
+// panelHealthy probes the panel at most every 30 seconds. Only one probe runs
+// at a time; concurrent callers get the last known answer instead of queueing
+// behind a network call.
 func (s *Server) panelHealthy(ctx context.Context) bool {
 	s.healthMu.Lock()
-	defer s.healthMu.Unlock()
-	if time.Since(s.healthAt) < 30*time.Second {
-		return s.healthOK
+	if time.Since(s.healthAt) < 30*time.Second || s.healthProbe != nil {
+		ok := s.healthOK
+		s.healthMu.Unlock()
+		return ok
 	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	_, err := s.xui.ServerStatus(ctx)
+	done := make(chan struct{})
+	s.healthProbe = done
+	s.healthMu.Unlock()
+
+	// Detached from the request: a client that walks away must not cancel the
+	// probe and poison the cached verdict for everyone else.
+	probeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+	_, err := s.xui.ServerStatus(probeCtx)
+	cancel()
+
+	s.healthMu.Lock()
 	s.healthOK = err == nil
-	s.healthAt = time.Now()
+	s.healthAt = s.now()
+	s.healthProbe = nil
+	s.healthMu.Unlock()
+	close(done)
+
 	if err != nil {
 		s.log.Warn("panel health check failed", "err", err)
 	}
-	return s.healthOK
+	return err == nil
 }
 
 // subscriptionURL builds the client's subscription link: SUB_BASE_URL wins,
-// otherwise panel settings are read and cached for an hour.
+// otherwise panel settings are read and cached for an hour. At most one read
+// is in flight; while it runs, callers are served the previous value and only
+// a cold cache waits for it.
 func (s *Server) subscriptionURL(ctx context.Context, subID string) string {
 	if s.env.SubBaseURL != "" {
 		return strings.TrimRight(s.env.SubBaseURL, "/") + "/" + subID
 	}
+
 	s.subMu.Lock()
-	defer s.subMu.Unlock()
-	if s.subBase == "" || time.Since(s.subBaseAt) > time.Hour {
-		settings, err := s.xui.Settings(ctx)
-		if err != nil {
-			s.log.Warn("cannot read panel settings for subscription URL", "err", err)
-			if s.subBase == "" {
-				return ""
-			}
-		} else {
-			s.subBase = settings.SubscriptionURL("")
-			s.subBaseAt = time.Now()
-		}
+	if s.subBase != "" && time.Since(s.subBaseAt) <= time.Hour {
+		base := s.subBase
+		s.subMu.Unlock()
+		return base + subID
 	}
-	return s.subBase + subID
+	if wait := s.subLoad; wait != nil {
+		stale := s.subBase
+		s.subMu.Unlock()
+		if stale != "" {
+			return stale + subID // refresh in flight: stale beats blocking
+		}
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ""
+		}
+		s.subMu.Lock()
+		base := s.subBase
+		s.subMu.Unlock()
+		return appendSubID(base, subID)
+	}
+	done := make(chan struct{})
+	s.subLoad = done
+	s.subMu.Unlock()
+
+	settings, err := s.xui.Settings(context.WithoutCancel(ctx))
+
+	s.subMu.Lock()
+	if err == nil {
+		s.subBase = settings.SubscriptionURL("")
+		s.subBaseAt = s.now()
+	}
+	base := s.subBase
+	s.subLoad = nil
+	s.subMu.Unlock()
+	close(done)
+
+	if err != nil {
+		s.log.Warn("cannot read panel settings for subscription URL", "err", err)
+	}
+	return appendSubID(base, subID)
+}
+
+// appendSubID keeps an unknown base URL reported as "no link" rather than as a
+// bare subscription id.
+func appendSubID(base, subID string) string {
+	if base == "" {
+		return ""
+	}
+	return base + subID
 }
