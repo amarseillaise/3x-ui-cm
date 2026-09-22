@@ -128,3 +128,32 @@ func TestFailureLimitRemovesEndpoint(t *testing.T) {
 		t.Errorf("still stored: %d", len(left))
 	}
 }
+
+func TestNormalizeSubject(t *testing.T) {
+	cases := map[string]string{
+		"mailto:a@b.test":      "a@b.test",
+		"MAILTO:a@b.test":      "a@b.test",
+		"  mailto: a@b.test  ": "a@b.test",
+		"a@b.test":             "a@b.test",
+		"https://cab.test":     "https://cab.test",
+		"":                     "",
+	}
+	for in, want := range cases {
+		if got := normalizeSubject(in); got != want {
+			t.Errorf("normalizeSubject(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// The library prepends "mailto:" to anything that is not an https URL, so the
+// stored subject must never carry the prefix itself.
+func TestSenderSubjectHasNoMailtoPrefix(t *testing.T) {
+	s := New(nil, "pub", "priv", "mailto:admin@example.com", nil)
+	if s.subject != "admin@example.com" {
+		t.Errorf("subject = %q, want %q", s.subject, "admin@example.com")
+	}
+	s = New(nil, "pub", "priv", "https://cab.example.com", nil)
+	if s.subject != "https://cab.example.com" {
+		t.Errorf("https subject must pass through, got %q", s.subject)
+	}
+}

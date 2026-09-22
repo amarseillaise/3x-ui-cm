@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,7 +62,7 @@ func New(st *store.Store, publicKey, privateKey, subject string, log *slog.Logge
 		log:        log,
 		publicKey:  publicKey,
 		privateKey: privateKey,
-		subject:    subject,
+		subject:    normalizeSubject(subject),
 		http:       &http.Client{Timeout: sendTimeout},
 		now:        time.Now,
 	}
@@ -72,6 +73,19 @@ func (s *Sender) Enabled() bool { return s.publicKey != "" && s.privateKey != ""
 
 // PublicKey returns the VAPID public key for the browser.
 func (s *Sender) PublicKey() string { return s.publicKey }
+
+// normalizeSubject strips a "mailto:" prefix. webpush-go prepends "mailto:"
+// to any subject that is not an https URL, so the documented and conventional
+// "mailto:you@example.com" would reach the push service as
+// "sub":"mailto:mailto:you@example.com". FCM tolerates that; Apple rejects the
+// token with 403 and no notification is ever delivered.
+func normalizeSubject(subject string) string {
+	subject = strings.TrimSpace(subject)
+	if strings.HasPrefix(strings.ToLower(subject), "mailto:") {
+		return strings.TrimSpace(subject[len("mailto:"):])
+	}
+	return subject
+}
 
 // GenerateVAPID creates a new VAPID key pair (base64url, as stored in env).
 func GenerateVAPID() (publicKey, privateKey string, err error) {
