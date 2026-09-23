@@ -1,6 +1,3 @@
-# syntax=docker/dockerfile:1
-# Build context is the repository root:  docker build -f deploy/Dockerfile .
-
 FROM node:22-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./

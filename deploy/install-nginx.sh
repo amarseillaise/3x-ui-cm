@@ -1,15 +1,5 @@
 #!/usr/bin/env bash
-# Install the generated nginx server block, test it, reload nginx and verify
-# that the port really ended up in nginx's hands.
-#
-# The last check is the point of this script: `nginx -t` passes and `reload`
-# returns 0 even when another process already owns the port, and nginx then
-# keeps serving the old configuration without saying so.
-#
-#   make nginx-config            # writes deploy/nginx/cabinet.conf
-#   sudo deploy/install-nginx.sh --dry-run
-#   sudo deploy/install-nginx.sh
-#   sudo deploy/install-nginx.sh --target /etc/nginx/conf.d/cabinet.conf
+
 set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)

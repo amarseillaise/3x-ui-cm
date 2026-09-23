@@ -1,6 +1,5 @@
 # Run from the repository root so relative paths resolve:
-#   docker compose --project-directory . -f deploy/docker-compose.yml up -d --build
-# Add "--profile edge" to also start Caddy (needs APP_DOMAIN in .env and free ports 80/443).
+# docker compose --project-directory . -f deploy/docker-compose.yml up -d --build
 services:
   app:
     build:

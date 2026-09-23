@@ -158,16 +158,25 @@ func (s *Scheduler) trafficMessage(sub domain.Subscription, now time.Time) (kind
 	ref = fmt.Sprintf("%d:%s", sub.QuotaBytes, now.Format(monthRefLayout))
 	switch {
 	case sub.Depleted():
-		return "depleted", ref, push.Message{Title: "Трафик исчерпан", Body: "Лимит трафика использован полностью.", URL: "/", Tag: "traffic"}, true
+		kind = "depleted"
+		msg = push.Message{
+			Title: "Трафик исчерпан",
+			Body:  "Лимит трафика использован полностью.",
+			URL:   "/",
+			Tag:   "traffic",
+		}
 	case sub.TrafficPercent() >= s.trafficPct:
-		return "traffic_high", ref, push.Message{
+		kind = "traffic_high"
+		msg = push.Message{
 			Title: "Трафик почти исчерпан",
 			Body:  fmt.Sprintf("Использовано %d%% лимита.", sub.TrafficPercent()),
 			URL:   "/",
 			Tag:   "traffic",
-		}, true
+		}
+	default:
+		return "", "", push.Message{}, false
 	}
-	return "", "", push.Message{}, false
+	return kind, ref, msg, true
 }
 
 // deliver sends once per (subID, kind, ref): the log row is written only after

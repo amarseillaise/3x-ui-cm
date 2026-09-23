@@ -173,7 +173,15 @@ func serve() error {
 		log.Warn("VAPID keys not set: Web Push disabled (run `server gen-vapid`)")
 	}
 
-	srv := httpapi.New(httpapi.Deps{Env: env, App: app, Store: st, XUI: panel, Push: sender, Log: log, Static: static})
+	srv := httpapi.New(httpapi.Deps{
+		Env:    env,
+		App:    app,
+		Store:  st,
+		XUI:    panel,
+		Push:   sender,
+		Log:    log,
+		Static: static,
+	})
 	httpServer := &http.Server{
 		Addr:              env.ListenAddr,
 		Handler:           srv.Handler(),
