@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { isApiError } from '../api'
+import { errorText } from '../errors'
 import { t } from '../i18n/ru'
 import { formatDate, formatDateTime, formatMoney, relativeTime } from '../format'
 import { useAdminRenewals, useAdminStats, useResolveRenewal } from '../hooks/useAdmin'
@@ -10,6 +11,7 @@ import Card from '../components/Card'
 import Centered from '../components/Centered'
 import Message from '../components/Message'
 import BroadcastForm from '../components/BroadcastForm'
+import ConfirmDialog from '../components/ConfirmDialog'
 import PushCard from '../components/PushCard'
 import RenewalStatusChip from '../components/RenewalStatusChip'
 
@@ -23,7 +25,7 @@ export default function AdminPage() {
   if (stats.isPending) return <Centered>{t.loading}</Centered>
   if (isApiError(stats.error, 401)) return <Message title={t.admin.noSessionTitle} body={t.admin.noSessionBody} />
   if (isApiError(stats.error, 403)) return <Message title={t.admin.forbiddenTitle} body={t.admin.forbiddenBody} />
-  if (stats.error || !stats.data) return <Message title={t.admin.title} body={t.errorGeneric} />
+  if (stats.error || !stats.data) return <Message title={t.admin.title} body={errorText(stats.error)} />
 
   const pendingCount = stats.data.renewals.pending ?? 0
   return (
@@ -75,18 +77,24 @@ export default function AdminPage() {
 function RenewalList({ status }: { status: string }) {
   const list = useAdminRenewals(status)
   const resolve = useResolveRenewal()
+  const [asking, setAsking] = useState<RenewalRequest | null>(null)
   if (list.isPending) return <Centered>{t.loading}</Centered>
-  if (list.error || !list.data) return <Card className="text-sm text-rose-200">{t.errorGeneric}</Card>
+  if (list.error || !list.data) return <Card className="text-sm text-rose-200">{errorText(list.error)}</Card>
   if (list.data.requests.length === 0) return <Card className="text-sm text-slate-400">{status === 'pending' ? t.admin.noPending : t.admin.noHistory}</Card>
 
-  const onReject = (r: RenewalRequest) => {
-    if (window.confirm(`${t.admin.rejectConfirm} ${r.email}, ${r.planTitle}, −${r.appliedDays} ${t.admin.days}`)) {
-      resolve.mutate({ id: r.id, action: 'reject' })
-    }
-  }
   return (
     <div className="flex flex-col gap-3">
-      {resolve.error && <Card className="text-sm text-rose-200">{isApiError(resolve.error, 502) ? t.panelUnavailable : t.errorGeneric}</Card>}
+      {resolve.error && <Card className="text-sm text-rose-200">{errorText(resolve.error)}</Card>}
+      {asking && (
+        <ConfirmDialog
+          title={t.admin.rejectTitle}
+          body={`${t.admin.rejectConfirm} ${asking.email}, ${asking.planTitle}, −${asking.appliedDays} ${t.admin.days}`}
+          confirmLabel={resolve.isPending ? t.admin.rejecting : t.admin.reject}
+          busy={resolve.isPending}
+          onCancel={() => setAsking(null)}
+          onConfirm={() => resolve.mutate({ id: asking.id, action: 'reject' }, { onSettled: () => setAsking(null) })}
+        />
+      )}
       {list.data.requests.map((r) => (
         <Card key={r.id}>
           <div className="mb-1 flex items-start justify-between gap-2">
@@ -112,7 +120,7 @@ function RenewalList({ status }: { status: string }) {
               <Button onClick={() => resolve.mutate({ id: r.id, action: 'confirm' })} disabled={resolve.isPending}>
                 {t.admin.confirm}
               </Button>
-              <Button variant="secondary" onClick={() => onReject(r)} disabled={resolve.isPending}>
+              <Button variant="secondary" onClick={() => setAsking(r)} disabled={resolve.isPending}>
                 {t.admin.reject}
               </Button>
             </div>
