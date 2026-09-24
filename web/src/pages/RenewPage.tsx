@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { isApiError } from '../api'
+import { errorText } from '../errors'
 import { t } from '../i18n/ru'
 import { formatDate, formatDateTime, formatMoney } from '../format'
 import { copyText } from '../platform'
@@ -21,7 +22,7 @@ export default function RenewPage() {
 
   if (plans.isPending) return <Centered>{t.loading}</Centered>
   if (isApiError(plans.error, 401)) return <NoSessionPage />
-  if (plans.error || !plans.data) return <Message title={t.renew.title} body={t.errorGeneric} />
+  if (plans.error || !plans.data) return <Message title={t.renew.title} body={errorText(plans.error)} />
   if (!plans.data.enabled) return <Message title={t.renew.title} body={t.renew.disabled} />
 
   if (renew.isSuccess) {
@@ -99,12 +100,11 @@ function PayStep({
   onBack: () => void
   onPaid: () => void
 }) {
-  let errorText: string | null = null
+  let message: string | null = null
   if (error) {
-    if (isApiError(error, 409) && error.code === 'pending_exists') errorText = t.renew.pending
-    else if (isApiError(error, 409) && error.code === 'unlimited') errorText = t.renew.unlimited
-    else if (isApiError(error, 502)) errorText = t.panelUnavailable
-    else errorText = t.errorGeneric
+    if (isApiError(error, 409) && error.code === 'pending_exists') message = t.renew.pending
+    else if (isApiError(error, 409) && error.code === 'unlimited') message = t.renew.unlimited
+    else message = errorText(error)
   }
   return (
     <>
@@ -123,7 +123,7 @@ function PayStep({
         </div>
         {data.paymentNote && <p className="mt-4 text-sm text-slate-400">{data.paymentNote}</p>}
       </Card>
-      {errorText && <Card className="border-rose-900/60 bg-rose-950/30 text-sm text-rose-200">{errorText}</Card>}
+      {message && <Card className="border-rose-900/60 bg-rose-950/30 text-sm text-rose-200">{message}</Card>}
       <Button onClick={onPaid} disabled={busy} className="w-full">
         {busy ? t.renew.sending : `${t.renew.paid} ${formatMoney(plan.price, data.currency)}`}
       </Button>

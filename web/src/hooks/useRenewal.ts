@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, PANEL_WRITE_TIMEOUT_MS } from '../api'
 import type { PlansResponse, RenewResponse, RenewalRequest } from '../types'
 
 export function usePlans() {
@@ -13,7 +13,8 @@ export function useMyRenewals() {
 export function useRenew() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (planId: string) => api<RenewResponse>('/api/renew', { method: 'POST', body: JSON.stringify({ planId }) }),
+    // Extends the subscription on the panel, so it gets the longer deadline.
+    mutationFn: (planId: string) => api<RenewResponse>('/api/renew', { method: 'POST', body: JSON.stringify({ planId }) }, PANEL_WRITE_TIMEOUT_MS),
     onSettled: () => Promise.all([qc.invalidateQueries({ queryKey: ['me'] }), qc.invalidateQueries({ queryKey: ['plans'] }), qc.invalidateQueries({ queryKey: ['renewals'] })]),
   })
 }

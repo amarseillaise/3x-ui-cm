@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { api, isApiError } from '../api'
+import { api } from '../api'
+import { errorText } from '../errors'
 import { t } from '../i18n/ru'
 import Button from './Button'
 import Card from './Card'
@@ -79,7 +80,7 @@ export default function BroadcastForm({ pushEnabled }: { pushEnabled: boolean })
           </p>
         )}
         {send.error && (
-          <p className="text-sm text-rose-300">{isApiError(send.error) ? send.error.message : t.errorGeneric}</p>
+          <p className="text-sm text-rose-300">{errorText(send.error)}</p>
         )}
       </form>
     </Card>

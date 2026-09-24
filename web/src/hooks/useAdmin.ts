@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api'
+import { api, PANEL_WRITE_TIMEOUT_MS } from '../api'
 import type { AdminStats, RenewalRequest } from '../types'
 
 export function useAdminStats() {
@@ -19,7 +19,8 @@ export function useResolveRenewal() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, action }: { id: number; action: 'confirm' | 'reject' }) =>
-      api<{ request: RenewalRequest }>(`/api/admin/renewals/${id}/${action}`, { method: 'POST' }),
+      // Rejecting rolls the days back on the panel, so it gets the longer deadline.
+      api<{ request: RenewalRequest }>(`/api/admin/renewals/${id}/${action}`, { method: 'POST' }, PANEL_WRITE_TIMEOUT_MS),
     onSettled: () => qc.invalidateQueries({ queryKey: ['admin'] }),
   })
 }

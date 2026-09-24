@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import { QRCodeSVG } from 'qrcode.react'
 import { isApiError } from '../api'
+import { errorText } from '../errors'
 import { t } from '../i18n/ru'
 import { useLogout, useMe } from '../hooks/useMe'
 import { daysWord, formatBytes, formatDate, relativeTime } from '../format'
@@ -26,7 +27,7 @@ export default function SubscriptionPage() {
     return (
       <Centered>
         <div className="flex flex-col items-center gap-3">
-          <span>{isApiError(me.error, 502) ? t.panelUnavailable : t.errorGeneric}</span>
+          <span>{errorText(me.error)}</span>
           <Button variant="secondary" onClick={() => void me.refetch()}>
             {t.retry}
           </Button>
