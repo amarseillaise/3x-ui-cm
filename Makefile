@@ -19,6 +19,9 @@ check: vet test build web-typecheck
 
 ## Build the frontend into internal/webdist/dist (Node 22: system or .tools/node).
 web:
+	# Vite refuses to empty an outDir outside its root, so stale bundles from
+	# earlier builds would pile up and all of them get embedded into the binary.
+	find internal/webdist/dist -mindepth 1 ! -name .gitkeep -delete
 	cd web && PATH=$(NODE_BIN)$$PATH npm ci --no-audit --no-fund && PATH=$(NODE_BIN)$$PATH npm run build
 
 web-typecheck:
