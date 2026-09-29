@@ -6,11 +6,11 @@ import (
 )
 
 func TestFromAppBaseURLTakesHostAndPort(t *testing.T) {
-	cfg, err := FromAppBaseURL("https://cab.example.com:8443", "/c/full.pem", "/c/priv.pem")
+	cfg, err := FromAppBaseURL("https://cab.example.com:13671", "/c/full.pem", "/c/priv.pem")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ServerName != "cab.example.com" || cfg.Port != 8443 {
+	if cfg.ServerName != "cab.example.com" || cfg.Port != 13671 {
 		t.Errorf("got %+v", cfg)
 	}
 	if cfg.Upstream != DefaultUpstream {
@@ -50,7 +50,7 @@ func TestFromAppBaseURLRejectsBadInput(t *testing.T) {
 // The generated port must be the one the app advertises, which is the drift
 // this generator exists to prevent.
 func TestRenderUsesTheSamePortAsAppBaseURL(t *testing.T) {
-	cfg, err := FromAppBaseURL("https://cab.example.com:8443", "/c/full.pem", "/c/priv.pem")
+	cfg, err := FromAppBaseURL("https://cab.example.com:13671", "/c/full.pem", "/c/priv.pem")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,8 +59,8 @@ func TestRenderUsesTheSamePortAsAppBaseURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"listen 8443 ssl http2;",
-		"listen [::]:8443 ssl http2;",
+		"listen 13671 ssl http2;",
+		"listen [::]:13671 ssl http2;",
 		"server_name cab.example.com;",
 		"ssl_certificate     /c/full.pem;",
 		"ssl_certificate_key /c/priv.pem;",
@@ -76,10 +76,10 @@ func TestRenderUsesTheSamePortAsAppBaseURL(t *testing.T) {
 }
 
 func TestRenderRedirectKeepsTheNonStandardPort(t *testing.T) {
-	cfg, _ := FromAppBaseURL("https://cab.example.com:8443", "/c", "/k")
+	cfg, _ := FromAppBaseURL("https://cab.example.com:13671", "/c", "/k")
 	cfg.RedirectHTTP = true
 	out, _ := Render(cfg)
-	if !strings.Contains(out, "return 301 https://$host:8443$request_uri;") {
+	if !strings.Contains(out, "return 301 https://$host:13671$request_uri;") {
 		t.Errorf("redirect lost the port:\n%s", out)
 	}
 
