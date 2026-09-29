@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
+import { Link, Navigate } from 'react-router'
 import { QRCodeSVG } from 'qrcode.react'
 import { isApiError } from '../api'
 import { errorText } from '../errors'
@@ -22,6 +22,10 @@ export default function SubscriptionPage() {
 
   if (me.isPending) return <Centered>{t.loading}</Centered>
   if (isApiError(me.error, 401)) return <NoSessionPage />
+  // 403 on a client route means an admin session. That happens when the admin
+  // app is opened at "/", e.g. by an icon installed before it had its own
+  // manifest: send it where it belongs instead of showing an error.
+  if (isApiError(me.error, 403)) return <Navigate to="/admin" replace />
   if (isApiError(me.error, 404)) return <InvalidLinkPage />
   if (me.error || !me.data) {
     return (

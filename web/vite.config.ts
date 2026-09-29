@@ -20,6 +20,9 @@ export default defineConfig({
         short_name: 'Подписка',
         description: 'Управление VPN-подпиской: срок, трафик, продление',
         lang: 'ru',
+        // Explicit, so the admin app's "/admin" id can never collide with it.
+        // The admin manifest is derived from this one on the server.
+        id: '/',
         start_url: '/',
         scope: '/',
         display: 'standalone',
