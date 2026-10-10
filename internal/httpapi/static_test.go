@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/amarseillaise/3x-ui-cm/internal/routes"
 	"github.com/amarseillaise/3x-ui-cm/internal/webdist"
 )
 
@@ -32,7 +33,7 @@ func TestAdminIndexPointsAtAdminManifest(t *testing.T) {
 	}
 	html := string(out)
 	for _, want := range []string{
-		`href="/admin.webmanifest"`,
+		`href="` + routes.AdminManifest + `"`,
 		`<meta name="apple-mobile-web-app-title" content="Админ" />`,
 		`<title>Админка кабинета</title>`,
 	} {
@@ -75,7 +76,7 @@ func TestAdminManifestIsASeparateApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	for key, want := range map[string]string{
-		"id": "/admin", "start_url": "/admin", "scope": "/", "short_name": "Админ",
+		"id": routes.Admin, "start_url": routes.Admin, "scope": "/", "short_name": "Админ",
 	} {
 		if m[key] != want {
 			t.Errorf("%s = %v, want %q", key, m[key], want)
@@ -107,9 +108,10 @@ func TestSPARoutesPickTheirManifest(t *testing.T) {
 	}{
 		{"/", false},
 		{"/renew", false},
-		{"/admin", true},
-		{"/admin/", true},
-		{"/admin/history", true},
+		{routes.Admin, true},
+		{routes.Admin + "/", true},
+		{routes.Admin + "/history", true},
+		{"/admin", false},         // the old path is an ordinary client route now
 		{"/administrator", false}, // a prefix match would be wrong
 	}
 	for _, c := range cases {
@@ -127,7 +129,7 @@ func TestSPARoutesPickTheirManifest(t *testing.T) {
 	if code != http.StatusOK || ctype != "application/manifest+json" {
 		t.Fatalf("admin manifest: %d %q", code, ctype)
 	}
-	if !strings.Contains(body, `"start_url":"/admin"`) {
+	if !strings.Contains(body, `"start_url":"`+routes.Admin+`"`) {
 		t.Errorf("admin manifest start_url wrong: %s", body)
 	}
 }

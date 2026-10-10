@@ -37,7 +37,8 @@ docker compose --project-directory . -f deploy/docker-compose.yml run --rm app g
 | `NODE_API_TOKEN` | Панель → Settings → Security → API Token |
 | `APP_BASE_URL` | Публичный адрес кабинета, вместе с портом, если он нестандартный |
 | `APP_DOMAIN` | Домен кабинета, нужен только профилю Caddy |
-| `ADMIN_TOKEN`, `ADMIN_LINK_SECRET`, `SESSION_SECRET` | Из `make gen-secrets` |
+| `ADMIN_TOKEN`, `SESSION_SECRET` | Из `make gen-secrets` |
+| `ADMIN_PASSWORD` | Пароль входа в админку, не короче 12 символов; `make gen-secrets` предложит случайный |
 | `VAPID_*` | Из `gen-vapid`, subject — почта или https-адрес |
 | `NGINX_CERT_FILE`, `NGINX_KEY_FILE` | Пути к сертификату на хосте, нужны только генератору конфига |
 | `TRUST_PROXY=1` | Если впереди стоит обратный прокси |
@@ -49,17 +50,17 @@ make compose-up        # внешний nginx, см. шаг 5
 make compose-edge-up   # либо Caddy внутри compose, если порты 80 и 443 свободны
 ```
 
-**5. nginx.** На сервере с 3x-ui порт 443 обычно занят самим Xray, а 80 — существующим nginx,
-поэтому кабинет живёт на своём порту, по умолчанию **13671**. Порт задаётся в `APP_BASE_URL`, всё
-остальное выводится оттуда. Не берите широко известные прокси-порты вроде 8443, 2053 или 2096: у
-части провайдеров фильтрация пропускает TCP-рукопожатие, а TLS-данные молча выбрасывает, и страница
-висит до таймаута вместо ошибки.
+**5. nginx.** По умолчанию кабинет работает на стандартном **443**: в `APP_BASE_URL` порт не
+указывается, всё остальное выводится оттуда. Если 443 на этом сервере занят, например Xray с
+REALITY, задайте в `APP_BASE_URL` высокий порт. Учтите, что такие порты у части провайдеров
+блокировались: TCP-рукопожатие проходит, а TLS-данные молча выбрасываются, и страница висит до
+таймаута. Подробности — в открытых вопросах `AGENT.md`.
 
 ```bash
 make nginx-config                      # → deploy/nginx/cabinet.conf
 sudo deploy/install-nginx.sh --dry-run # показать, что будет сделано
 sudo deploy/install-nginx.sh           # положить, проверить, перезагрузить
-curl -sS https://cab.example.com:13671/healthz   # {"panel":"ok","status":"ok"}
+curl -sS https://cab.example.com/healthz   # {"panel":"ok","status":"ok"}
 ```
 
 Скрипт сам находит, куда nginx включает конфиги, делает резервную копию, откатывается при отказе
@@ -87,7 +88,7 @@ curl -s https://sub.example.com:7115/subway/<subId> | head -c 80
 
 ## Администрирование
 
-Админка — `https://cab.example.com/a/<ADMIN_LINK_SECRET>`. Установите PWA на телефон и включите
+Админка — `https://cab.example.com/tagrolka`, вход по паролю из `ADMIN_PASSWORD`. Установите PWA на телефон и включите
 уведомления, иначе заявки приходить не будут. Клиенту отдавайте его ссылку подписки, её печатает
 `pushctl link -email <email>`. CLI читает `APP_BASE_URL` и `ADMIN_TOKEN` из `.env`:
 

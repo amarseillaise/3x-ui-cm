@@ -11,6 +11,7 @@ import (
 
 	"github.com/amarseillaise/3x-ui-cm/internal/domain"
 	"github.com/amarseillaise/3x-ui-cm/internal/push"
+	"github.com/amarseillaise/3x-ui-cm/internal/routes"
 	"github.com/amarseillaise/3x-ui-cm/internal/store"
 	"github.com/amarseillaise/3x-ui-cm/internal/xui"
 )
@@ -220,7 +221,7 @@ func (s *Scheduler) remindAdmins(ctx context.Context, now time.Time) int {
 		msg := push.Message{
 			Title: "Заявка ждёт подтверждения",
 			Body:  fmt.Sprintf("%s: %d дн., %d %s — с %s", r.Email, r.Days, r.Amount, r.Currency, time.UnixMilli(r.CreatedAt).Local().Format(dateLayout)),
-			URL:   "/admin",
+			URL:   routes.Admin,
 			Tag:   fmt.Sprintf("renewal-%d", r.ID),
 		}
 		res := s.push.SendToAdmins(ctx, msg)

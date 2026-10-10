@@ -14,6 +14,7 @@ import (
 	"github.com/amarseillaise/3x-ui-cm/internal/config"
 	"github.com/amarseillaise/3x-ui-cm/internal/domain"
 	"github.com/amarseillaise/3x-ui-cm/internal/push"
+	"github.com/amarseillaise/3x-ui-cm/internal/routes"
 	"github.com/amarseillaise/3x-ui-cm/internal/store"
 	"github.com/amarseillaise/3x-ui-cm/internal/xui"
 )
@@ -235,7 +236,7 @@ func (s *Service) notifyAdmins(ctx context.Context, req *store.RenewalRequest, p
 	msg := push.Message{
 		Title: "Заявка на продление",
 		Body:  fmt.Sprintf("%s: %s, %d %s", req.Email, plan.Title, req.Amount, req.Currency),
-		URL:   "/admin",
+		URL:   routes.Admin,
 		Tag:   fmt.Sprintf("renewal-%d", req.ID),
 	}
 	res := s.push.SendToAdmins(ctx, msg)

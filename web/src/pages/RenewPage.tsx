@@ -3,6 +3,7 @@ import { Link, Navigate } from 'react-router'
 import { isApiError } from '../api'
 import { errorText } from '../errors'
 import { t } from '../i18n/ru'
+import { ADMIN_PATH } from '../routes'
 import { formatDate, formatDateTime, formatMoney } from '../format'
 import { copyText } from '../platform'
 import { useMyRenewals, usePlans, useRenew } from '../hooks/useRenewal'
@@ -22,7 +23,7 @@ export default function RenewPage() {
 
   if (plans.isPending) return <Centered>{t.loading}</Centered>
   if (isApiError(plans.error, 401)) return <NoSessionPage />
-  if (isApiError(plans.error, 403)) return <Navigate to="/admin" replace /> // admin session
+  if (isApiError(plans.error, 403)) return <Navigate to={ADMIN_PATH} replace /> // admin session
   if (plans.error || !plans.data) return <Message title={t.renew.title} body={errorText(plans.error)} />
   if (!plans.data.enabled) return <Message title={t.renew.title} body={t.renew.disabled} />
 

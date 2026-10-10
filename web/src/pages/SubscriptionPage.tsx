@@ -4,6 +4,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { isApiError } from '../api'
 import { errorText } from '../errors'
 import { t } from '../i18n/ru'
+import { ADMIN_PATH } from '../routes'
 import { useLogout, useMe } from '../hooks/useMe'
 import { daysWord, formatBytes, formatDate, relativeTime } from '../format'
 import { copyText, isIOS, isStandalone } from '../platform'
@@ -25,7 +26,7 @@ export default function SubscriptionPage() {
   // 403 on a client route means an admin session. That happens when the admin
   // app is opened at "/", e.g. by an icon installed before it had its own
   // manifest: send it where it belongs instead of showing an error.
-  if (isApiError(me.error, 403)) return <Navigate to="/admin" replace />
+  if (isApiError(me.error, 403)) return <Navigate to={ADMIN_PATH} replace />
   if (isApiError(me.error, 404)) return <InvalidLinkPage />
   if (me.error || !me.data) {
     return (

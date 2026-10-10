@@ -8,6 +8,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/amarseillaise/3x-ui-cm/internal/routes"
 )
 
 func isStatic(p string) bool {
@@ -30,7 +32,7 @@ func maskPath(p string) string {
 // client screen, and the admin session got "Недостаточно прав" there.
 const (
 	clientManifestPath = "/manifest.webmanifest"
-	adminManifestPath  = "/admin.webmanifest"
+	adminManifestPath  = routes.AdminManifest
 	adminAppTitle      = "Админ"
 	adminPageTitle     = "Админка кабинета"
 )
@@ -43,7 +45,7 @@ var (
 
 // isAdminRoute reports whether a client-side route belongs to the admin app.
 func isAdminRoute(urlPath string) bool {
-	return urlPath == "/admin" || strings.HasPrefix(urlPath, "/admin/")
+	return urlPath == routes.Admin || strings.HasPrefix(urlPath, routes.Admin+"/")
 }
 
 // adminIndex points the page at the admin manifest and renames it. changed is
@@ -67,8 +69,8 @@ func adminManifest(client []byte) ([]byte, error) {
 	if err := json.Unmarshal(client, &m); err != nil {
 		return nil, err
 	}
-	m["id"] = "/admin"
-	m["start_url"] = "/admin"
+	m["id"] = routes.Admin
+	m["start_url"] = routes.Admin
 	m["scope"] = "/"
 	m["name"] = adminPageTitle
 	m["short_name"] = adminAppTitle

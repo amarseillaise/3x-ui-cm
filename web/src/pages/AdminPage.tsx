@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { isApiError } from '../api'
 import { errorText } from '../errors'
 import { t } from '../i18n/ru'
+import { ADMIN_PATH } from '../routes'
 import { formatDate, formatDateTime, formatMoney, relativeTime } from '../format'
 import { useAdminLogin, useAdminRenewals, useAdminStats, useResolveRenewal } from '../hooks/useAdmin'
 import { useLogout } from '../hooks/useMe'
@@ -19,7 +20,7 @@ type Tab = 'pending' | 'history' | 'broadcast'
 
 export default function AdminPage() {
   const stats = useAdminStats()
-  const logout = useLogout('/admin')
+  const logout = useLogout(ADMIN_PATH)
   const [tab, setTab] = useState<Tab>('pending')
 
   if (stats.isPending) return <Centered>{t.loading}</Centered>
