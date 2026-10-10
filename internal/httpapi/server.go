@@ -42,6 +42,7 @@ type Server struct {
 	mux      *http.ServeMux
 	sessions *auth.Manager
 	links    *auth.Limiter
+	receipts *auth.Limiter
 	now      func() time.Time
 
 	// healthMu guards the cached panel health only. The probe itself runs
@@ -65,7 +66,7 @@ func New(d Deps) *Server {
 		d.Log = slog.Default()
 	}
 	if d.Push == nil {
-		d.Push = push.New(d.Store, "", "", "", d.Log)
+		d.Push = push.New(d.Store, push.Config{}, d.Log)
 	}
 	s := &Server{
 		env:      d.Env,
@@ -78,6 +79,7 @@ func New(d Deps) *Server {
 		mux:      http.NewServeMux(),
 		sessions: auth.NewManager(d.Store, d.Env.SessionSecret, strings.HasPrefix(d.Env.AppBaseURL, "https://")),
 		links:    auth.NewLimiter(10, 10),
+		receipts: auth.NewLimiter(60, 30),
 		now:      time.Now,
 	}
 	s.routes(d.Static)
@@ -101,6 +103,8 @@ func (s *Server) routes(static fs.FS) {
 	m.Handle("POST /api/logout", s.requireAnyRole()(http.HandlerFunc(s.handleLogout)))
 	m.Handle("POST /api/push/subscribe", s.requireAnyRole()(http.HandlerFunc(s.handlePushSubscribe)))
 	m.Handle("DELETE /api/push/subscribe", s.requireAnyRole()(http.HandlerFunc(s.handlePushUnsubscribe)))
+	// No session on purpose: see handlePushReceipt.
+	m.HandleFunc("POST /api/push/receipt", s.handlePushReceipt)
 
 	// Admin API (admin session cookie or Bearer ADMIN_TOKEN).
 	admin := s.requireRole(store.RoleAdmin)

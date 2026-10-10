@@ -81,7 +81,7 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	pub, privKey, _ := push.GenerateVAPID()
-	sender := push.New(st, pub, privKey, "mailto:t@example.com", nil)
+	sender := push.New(st, push.Config{PublicKey: pub, PrivateKey: privKey, Subject: "mailto:t@example.com"}, nil)
 	x, _ := xui.New(panel.URL, "tok", xui.WithCacheTTL(0))
 	h.sched = New(st, x, sender, time.Minute, []int{7, 3, 1}, 90, nil)
 	h.sched.now = func() time.Time { return h.now }

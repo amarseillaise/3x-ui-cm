@@ -8,7 +8,10 @@ ON CONFLICT(endpoint) DO UPDATE SET
     p256dh     = excluded.p256dh,
     auth       = excluded.auth,
     user_agent = excluded.user_agent,
-    fail_count = 0;
+    fail_count = 0,
+    -- subscribing again is itself proof that the device is alive
+    unconfirmed       = 0,
+    unconfirmed_since = 0;
 
 -- name: push.delete
 DELETE FROM push_subscriptions WHERE endpoint = ?;
@@ -38,8 +41,25 @@ FROM push_subscriptions
 WHERE role = ? AND sub_id IN (%s)
 ORDER BY created_at;
 
--- name: push.mark_delivered
-UPDATE push_subscriptions SET last_ok_at = ?, fail_count = 0 WHERE endpoint = ?;
+-- name: push.record_accepted
+-- The push service took the message, which is not the same as the device
+-- showing it. unconfirmed counts such messages since the last receipt, and
+-- unconfirmed_since marks when that silence began. SET expressions read the
+-- old row, so the CASE sees the count before the increment.
+UPDATE push_subscriptions
+SET last_ok_at        = ?,
+    fail_count        = 0,
+    unconfirmed_since = CASE WHEN unconfirmed = 0 THEN ? ELSE unconfirmed_since END,
+    unconfirmed       = unconfirmed + 1
+WHERE endpoint = ?
+RETURNING unconfirmed, unconfirmed_since;
+
+-- name: push.record_receipt
+UPDATE push_subscriptions
+SET last_receipt_at   = ?,
+    unconfirmed       = 0,
+    unconfirmed_since = 0
+WHERE endpoint = ?;
 
 -- name: push.mark_failed
 UPDATE push_subscriptions SET fail_count = fail_count + 1 WHERE endpoint = ?;

@@ -34,7 +34,8 @@ type Set struct {
 	PushListByRole        string
 	PushListBySubIDs      string // holds a %s for the id placeholders
 	PushListByRoleAndSubs string // holds a %s for the id placeholders
-	PushMarkDelivered     string
+	PushRecordAccepted    string
+	PushRecordReceipt     string
 	PushMarkFailed        string
 	PushCountForSub       string
 	PushCountByRole       string
@@ -78,7 +79,8 @@ func (s *Set) bindings() map[string]*string {
 		"push.list_by_role":             &s.PushListByRole,
 		"push.list_by_sub_ids":          &s.PushListBySubIDs,
 		"push.list_by_role_and_sub_ids": &s.PushListByRoleAndSubs,
-		"push.mark_delivered":           &s.PushMarkDelivered,
+		"push.record_accepted":          &s.PushRecordAccepted,
+		"push.record_receipt":           &s.PushRecordReceipt,
 		"push.mark_failed":              &s.PushMarkFailed,
 		"push.count_for_sub":            &s.PushCountForSub,
 		"push.count_by_role":            &s.PushCountByRole,

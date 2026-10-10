@@ -144,7 +144,7 @@ func newEnv(t *testing.T) *env {
 		NotifyDays: []int{7, 3, 1}, TrustProxy: false,
 	}
 	pub, priv, _ := push.GenerateVAPID()
-	sender := push.New(st, pub, priv, "mailto:t@example.com", nil)
+	sender := push.New(st, push.Config{PublicKey: pub, PrivateKey: priv, Subject: "mailto:t@example.com", BaseURL: "http://cab.test"}, nil)
 	s := New(Deps{Env: e, App: app, Store: st, XUI: x, Push: sender, Static: fstest.MapFS{"index.html": {Data: []byte("<html>app</html>")}}})
 	now := time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)
 	s.now = func() time.Time { return now }
@@ -612,5 +612,52 @@ func TestHealthzProbeSurvivesClientCancel(t *testing.T) {
 		if out["panel"] != "ok" {
 			t.Errorf("panel = %q, want ok", out["panel"])
 		}
+	}
+}
+
+// Receipts come from a service worker that may have no session at all, and
+// they are what keeps a live device's subscription from being dropped.
+func TestPushReceiptWorksWithoutSession(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	const ep = "https://web.push.apple.com/device-1"
+	if err := e.store.UpsertPushSubscription(ctx, store.PushSubscription{Endpoint: ep, Role: store.RoleClient, SubID: "abc123xyz", P256dh: "k", Auth: "a", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.store.RecordPushAccepted(ctx, ep, 100)
+	_, _ = e.store.RecordPushAccepted(ctx, ep, 200)
+
+	post := func(body string) int {
+		res, err := http.Post(e.srv.URL+"/api/push/receipt", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		return res.StatusCode
+	}
+
+	if code := post(`{"endpoint":"` + ep + `"}`); code != http.StatusNoContent {
+		t.Fatalf("receipt without a session: %d, want 204", code)
+	}
+	if got, _ := e.store.RecordPushAccepted(ctx, ep, 300); got.Unconfirmed != 1 {
+		t.Errorf("receipt must reset the silence, unconfirmed = %d", got.Unconfirmed)
+	}
+
+	// An unknown endpoint looks exactly like a known one from outside.
+	if code := post(`{"endpoint":"https://web.push.apple.com/nobody"}`); code != http.StatusNoContent {
+		t.Errorf("unknown endpoint: %d, want 204", code)
+	}
+	for _, bad := range []string{`not json`, `{}`, `{"endpoint":"not a url"}`, `{"endpoint":"ftp://x/y"}`} {
+		if code := post(bad); code != http.StatusBadRequest {
+			t.Errorf("body %q: %d, want 400", bad, code)
+		}
+	}
+
+	limited := false
+	for i := 0; i < 60 && !limited; i++ {
+		limited = post(`{"endpoint":"`+ep+`"}`) == http.StatusTooManyRequests
+	}
+	if !limited {
+		t.Error("receipts must be rate limited per address")
 	}
 }

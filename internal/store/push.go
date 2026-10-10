@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/amarseillaise/3x-ui-cm/internal/store/queries"
@@ -60,15 +62,40 @@ func (s *Store) ListPushSubscriptions(ctx context.Context, role string, subIDs [
 	return out, rows.Err()
 }
 
-// MarkPushResult records a delivery outcome for an endpoint.
-func (s *Store) MarkPushResult(ctx context.Context, endpoint string, ok bool, at int64) error {
-	var err error
-	if ok {
-		_, err = s.db.ExecContext(ctx, queries.Q.PushMarkDelivered, at, endpoint)
-	} else {
-		_, err = s.db.ExecContext(ctx, queries.Q.PushMarkFailed, endpoint)
+// PushSilence is how long an endpoint has gone without confirming delivery.
+type PushSilence struct {
+	Unconfirmed int   // messages the push service accepted since the last receipt
+	Since       int64 // when the first of them was accepted; 0 when Unconfirmed is 0
+}
+
+// RecordPushAccepted notes that the push service accepted a message for the
+// endpoint and returns the silence that follows. ErrNotFound means the
+// endpoint was deleted meanwhile.
+func (s *Store) RecordPushAccepted(ctx context.Context, endpoint string, at int64) (PushSilence, error) {
+	var silence PushSilence
+	err := s.db.QueryRowContext(ctx, queries.Q.PushRecordAccepted, at, at, endpoint).
+		Scan(&silence.Unconfirmed, &silence.Since)
+	if errors.Is(err, sql.ErrNoRows) {
+		return silence, ErrNotFound
 	}
+	return silence, err
+}
+
+// RecordPushFailure counts a delivery the push service refused.
+func (s *Store) RecordPushFailure(ctx context.Context, endpoint string) error {
+	_, err := s.db.ExecContext(ctx, queries.Q.PushMarkFailed, endpoint)
 	return err
+}
+
+// RecordPushReceipt notes that the device's service worker received a message,
+// ending any silence. It reports whether the endpoint is known.
+func (s *Store) RecordPushReceipt(ctx context.Context, endpoint string, at int64) (bool, error) {
+	res, err := s.db.ExecContext(ctx, queries.Q.PushRecordReceipt, at, endpoint)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 // HasPushSubscription reports whether a subscription id has at least one endpoint.

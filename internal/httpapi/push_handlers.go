@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/amarseillaise/3x-ui-cm/internal/auth"
 	"github.com/amarseillaise/3x-ui-cm/internal/store"
 )
 
@@ -70,6 +71,34 @@ func (s *Server) handlePushUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.store.DeletePushSubscription(r.Context(), req.Endpoint); err != nil {
 		s.log.Error("push unsubscribe", "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "Не удалось удалить подписку")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handlePushReceipt is POST /api/push/receipt: a service worker reports that
+// it received a message, which is the only way to tell a live device from a
+// web app removed from an iPhone home screen. Apple answers 2xx for both.
+//
+// No session is required, because receipts must keep coming after a session
+// expires. The endpoint is the credential: a long unguessable URL known only
+// to the device and to this server. An unknown endpoint gets the same 204, so
+// the call cannot be used to probe which endpoints exist.
+func (s *Server) handlePushReceipt(w http.ResponseWriter, r *http.Request) {
+	if !s.receipts.Allow(auth.ClientIP(r, s.env.TrustProxy)) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много запросов")
+		return
+	}
+	var req struct {
+		Endpoint string `json:"endpoint"`
+	}
+	if err := readJSON(r, &req); err != nil || !validEndpoint(req.Endpoint) {
+		writeError(w, http.StatusBadRequest, "bad_request", "Некорректная квитанция")
+		return
+	}
+	if _, err := s.push.Receipt(r.Context(), req.Endpoint); err != nil {
+		s.log.Error("push receipt", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Внутренняя ошибка сервера")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

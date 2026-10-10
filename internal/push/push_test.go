@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/amarseillaise/3x-ui-cm/internal/store"
 )
@@ -69,7 +70,7 @@ func TestSendToPrunesAndCounts(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	s := New(st, pub, priv, "mailto:test@example.com", nil)
+	s := New(st, Config{PublicKey: pub, PrivateKey: priv, Subject: "mailto:test@example.com"}, nil)
 	res := s.SendToSubID(ctx, "sub1", Message{Title: "Hi", Body: "There", URL: "/"})
 	if res.Sent != 1 || res.Removed != 1 || res.Failed != 1 {
 		t.Fatalf("result = %+v", res)
@@ -99,7 +100,7 @@ func TestDisabledSenderDropsMessages(t *testing.T) {
 	st := newStore(t)
 	ctx := context.Background()
 	_ = st.UpsertPushSubscription(ctx, store.PushSubscription{Endpoint: "http://127.0.0.1:1/x", Role: store.RoleAdmin, P256dh: "k", Auth: "a", CreatedAt: 1})
-	s := New(st, "", "", "", nil)
+	s := New(st, Config{}, nil)
 	if s.Enabled() {
 		t.Fatal("must be disabled")
 	}
@@ -116,7 +117,7 @@ func TestFailureLimitRemovesEndpoint(t *testing.T) {
 	pub, priv, _ := GenerateVAPID()
 	p256dh, auth := browserKeys(t)
 	_ = st.UpsertPushSubscription(ctx, store.PushSubscription{Endpoint: pushSvc.URL + "/x", Role: store.RoleClient, SubID: "s", P256dh: p256dh, Auth: auth, CreatedAt: 1})
-	s := New(st, pub, priv, "mailto:t@example.com", nil)
+	s := New(st, Config{PublicKey: pub, PrivateKey: priv, Subject: "mailto:t@example.com"}, nil)
 	var last Result
 	for i := 0; i < maxFailures; i++ {
 		last = s.SendToSubID(ctx, "s", Message{Title: "x"})
@@ -148,12 +149,124 @@ func TestNormalizeSubject(t *testing.T) {
 // The library prepends "mailto:" to anything that is not an https URL, so the
 // stored subject must never carry the prefix itself.
 func TestSenderSubjectHasNoMailtoPrefix(t *testing.T) {
-	s := New(nil, "pub", "priv", "mailto:admin@example.com", nil)
+	s := New(nil, Config{PublicKey: "pub", PrivateKey: "priv", Subject: "mailto:admin@example.com"}, nil)
 	if s.subject != "admin@example.com" {
 		t.Errorf("subject = %q, want %q", s.subject, "admin@example.com")
 	}
-	s = New(nil, "pub", "priv", "https://cab.example.com", nil)
+	s = New(nil, Config{PublicKey: "pub", PrivateKey: "priv", Subject: "https://cab.example.com"}, nil)
 	if s.subject != "https://cab.example.com" {
 		t.Errorf("https subject must pass through, got %q", s.subject)
+	}
+}
+
+func TestAbsoluteURL(t *testing.T) {
+	s := New(nil, Config{BaseURL: "https://cab.test:13671/"}, nil)
+	cases := map[string]string{
+		"/renew":                 "https://cab.test:13671/renew",
+		"":                       "https://cab.test:13671/",
+		"/":                      "https://cab.test:13671/",
+		"admin":                  "https://cab.test:13671/admin",
+		"https://other.test/x?y": "https://other.test/x?y",
+		"http://legacy.test/":    "http://legacy.test/",
+	}
+	for in, want := range cases {
+		if got := s.absoluteURL(in); got != want {
+			t.Errorf("absoluteURL(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := New(nil, Config{}, nil).absoluteURL("/renew"); got != "/renew" {
+		t.Errorf("without a base URL links must stay as they are, got %q", got)
+	}
+}
+
+// silenceRig is a push service that accepts everything and a sender whose
+// clock the test moves, so two weeks of silence take no time at all.
+type silenceRig struct {
+	st    *store.Store
+	s     *Sender
+	clock time.Time
+	ep    string
+}
+
+func newSilenceRig(t *testing.T) *silenceRig {
+	t.Helper()
+	st := newStore(t)
+	svc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusCreated) }))
+	t.Cleanup(svc.Close)
+	pub, priv, _ := GenerateVAPID()
+	p256dh, auth := browserKeys(t)
+	r := &silenceRig{st: st, clock: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), ep: svc.URL + "/web-app"}
+	if err := st.UpsertPushSubscription(context.Background(), store.PushSubscription{Endpoint: r.ep, Role: store.RoleClient, SubID: "s", P256dh: p256dh, Auth: auth, CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	r.s = New(st, Config{PublicKey: pub, PrivateKey: priv, Subject: "t@example.com"}, nil)
+	r.s.now = func() time.Time { return r.clock }
+	return r
+}
+
+func (r *silenceRig) sendAfter(d time.Duration) Result {
+	r.clock = r.clock.Add(d)
+	return r.s.SendToSubID(context.Background(), "s", Message{Title: "x"})
+}
+
+func (r *silenceRig) stored() bool {
+	left, _ := r.st.ListPushSubscriptions(context.Background(), "", []string{"s"})
+	return len(left) == 1
+}
+
+// The iPhone case: Apple keeps answering 2xx for a removed web app, so only
+// the missing receipts reveal it.
+func TestSilentEndpointIsDropped(t *testing.T) {
+	r := newSilenceRig(t)
+	r.sendAfter(0)
+	r.sendAfter(24 * time.Hour)
+	res := r.sendAfter(14 * 24 * time.Hour)
+	if res.Removed != 1 || res.Sent != 0 {
+		t.Errorf("third unconfirmed message after two weeks must drop the endpoint: %+v", res)
+	}
+	if r.stored() {
+		t.Error("silent endpoint is still stored")
+	}
+}
+
+// A phone that is off for a few days must keep its subscription, however many
+// messages it missed.
+func TestShortSilenceKeepsEndpoint(t *testing.T) {
+	r := newSilenceRig(t)
+	for i := 0; i < 10; i++ {
+		if res := r.sendAfter(30 * time.Hour); res.Removed != 0 {
+			t.Fatalf("dropped after %d messages over %v", i+1, time.Duration(i+1)*30*time.Hour)
+		}
+	}
+	if !r.stored() {
+		t.Error("endpoint lost during a silence shorter than the grace period")
+	}
+}
+
+// Two long gaps with a single message each are not enough on their own.
+func TestFewMessagesKeepEndpoint(t *testing.T) {
+	r := newSilenceRig(t)
+	r.sendAfter(0)
+	if res := r.sendAfter(30 * 24 * time.Hour); res.Removed != 0 {
+		t.Errorf("two unconfirmed messages must not drop an endpoint: %+v", res)
+	}
+	if !r.stored() {
+		t.Error("endpoint dropped below the message limit")
+	}
+}
+
+// A device that confirms keeps its subscription indefinitely.
+func TestReceiptsKeepEndpoint(t *testing.T) {
+	r := newSilenceRig(t)
+	for i := 0; i < 6; i++ {
+		if res := r.sendAfter(10 * 24 * time.Hour); res.Removed != 0 {
+			t.Fatalf("confirmed endpoint dropped at message %d", i+1)
+		}
+		if known, err := r.s.Receipt(context.Background(), r.ep); err != nil || !known {
+			t.Fatalf("receipt: known=%v err=%v", known, err)
+		}
+	}
+	if !r.stored() {
+		t.Error("a device that confirms every message must stay")
 	}
 }

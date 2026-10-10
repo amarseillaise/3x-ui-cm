@@ -155,7 +155,7 @@ func TestPushSubscriptions(t *testing.T) {
 	if len(none) != 0 {
 		t.Errorf("empty id list must return nothing, got %d", len(none))
 	}
-	if err := s.MarkPushResult(ctx, "e1", false, 0); err != nil {
+	if err := s.RecordPushFailure(ctx, "e1"); err != nil {
 		t.Fatal(err)
 	}
 	some, _ = s.ListPushSubscriptions(ctx, "", []string{"sub1"})
@@ -171,5 +171,55 @@ func TestPushSubscriptions(t *testing.T) {
 	counts, _ := s.CountPushSubscriptions(ctx)
 	if counts[RoleClient] != 1 || counts[RoleAdmin] != 1 {
 		t.Errorf("counts: %v", counts)
+	}
+}
+
+// The silence counter is what tells a live device from a removed home-screen
+// app, so its arithmetic has to hold exactly.
+func TestPushSilenceCountsUntilReceipt(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if err := s.UpsertPushSubscription(ctx, PushSubscription{Endpoint: "e", Role: RoleClient, SubID: "x", P256dh: "k", Auth: "a", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for i, at := range []int64{100, 200, 300} {
+		got, err := s.RecordPushAccepted(ctx, "e", at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The silence starts at the first unconfirmed message and stays there.
+		if got.Unconfirmed != i+1 || got.Since != 100 {
+			t.Errorf("after send %d: %+v, want {%d 100}", i+1, got, i+1)
+		}
+	}
+
+	if known, err := s.RecordPushReceipt(ctx, "e", 400); err != nil || !known {
+		t.Fatalf("receipt: known=%v err=%v", known, err)
+	}
+	got, _ := s.RecordPushAccepted(ctx, "e", 500)
+	if got.Unconfirmed != 1 || got.Since != 500 {
+		t.Errorf("a receipt must restart the count: %+v", got)
+	}
+
+	if known, _ := s.RecordPushReceipt(ctx, "unknown", 1); known {
+		t.Error("receipt for an unknown endpoint must report false")
+	}
+	if _, err := s.RecordPushAccepted(ctx, "unknown", 1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("accepted for an unknown endpoint: %v, want ErrNotFound", err)
+	}
+}
+
+// Subscribing again proves the device is alive.
+func TestPushResubscribeClearsSilence(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	sub := PushSubscription{Endpoint: "e", Role: RoleClient, SubID: "x", P256dh: "k", Auth: "a", CreatedAt: 1}
+	_ = s.UpsertPushSubscription(ctx, sub)
+	_, _ = s.RecordPushAccepted(ctx, "e", 100)
+	_, _ = s.RecordPushAccepted(ctx, "e", 200)
+	_ = s.UpsertPushSubscription(ctx, sub)
+	got, _ := s.RecordPushAccepted(ctx, "e", 300)
+	if got.Unconfirmed != 1 || got.Since != 300 {
+		t.Errorf("resubscribe must clear the silence: %+v", got)
 	}
 }

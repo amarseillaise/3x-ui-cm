@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,14 @@ const (
 	maxFailures     = 10        // consecutive failures before an endpoint is dropped
 	sendConcurrency = 8
 	sendTimeout     = 15 * time.Second
+
+	// An endpoint the push service keeps accepting, but whose device never
+	// confirms receipt, is dropped once both limits are passed. Apple answers
+	// 2xx for a web app that was removed from the home screen, so status codes
+	// alone never reveal it. Both limits are needed: a phone that is simply
+	// offline for a few days must not lose its subscription.
+	maxUnconfirmed   = 3
+	unconfirmedGrace = 14 * 24 * time.Hour
 )
 
 // Message is the notification payload the service worker renders.
@@ -40,6 +49,18 @@ type Result struct {
 	Removed int `json:"removed"`
 }
 
+// Config is what a Sender needs. A struct rather than positional strings: four
+// of them in a row are too easy to swap.
+type Config struct {
+	PublicKey  string // VAPID; empty keys give a disabled sender
+	PrivateKey string
+	Subject    string // contact: "mailto:you@example.com", "you@example.com" or an https URL
+	// BaseURL makes notification links absolute. A relative link is resolved
+	// by the service worker against its own origin, so a subscription made
+	// before the site moved would open the old, dead address.
+	BaseURL string
+}
+
 // Sender delivers messages. A Sender with empty keys is disabled and reports
 // every message as failed without contacting anything.
 type Sender struct {
@@ -48,24 +69,44 @@ type Sender struct {
 	publicKey  string
 	privateKey string
 	subject    string
+	baseURL    string
 	http       *http.Client
 	now        func() time.Time
 }
 
-// New builds a sender. Pass empty keys to get a disabled sender.
-func New(st *store.Store, publicKey, privateKey, subject string, log *slog.Logger) *Sender {
+// New builds a sender.
+func New(st *store.Store, cfg Config, log *slog.Logger) *Sender {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Sender{
 		store:      st,
 		log:        log,
-		publicKey:  publicKey,
-		privateKey: privateKey,
-		subject:    normalizeSubject(subject),
+		publicKey:  cfg.PublicKey,
+		privateKey: cfg.PrivateKey,
+		subject:    normalizeSubject(cfg.Subject),
+		baseURL:    strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		http:       &http.Client{Timeout: sendTimeout},
 		now:        time.Now,
 	}
+}
+
+// absoluteURL turns a site path into a full link. Full links and an unset
+// base pass through unchanged.
+func (s *Sender) absoluteURL(link string) string {
+	if s.baseURL == "" {
+		return link
+	}
+	if link == "" {
+		return s.baseURL + "/"
+	}
+	if u, err := url.Parse(link); err == nil && u.IsAbs() {
+		return link
+	}
+	if !strings.HasPrefix(link, "/") {
+		link = "/" + link
+	}
+	return s.baseURL + link
 }
 
 // Enabled reports whether VAPID keys are configured.
@@ -132,6 +173,7 @@ func (s *Sender) SendTo(ctx context.Context, subs []store.PushSubscription, msg 
 		s.log.Warn("push: disabled (no VAPID keys), message dropped", "recipients", len(subs))
 		return Result{Failed: len(subs)}
 	}
+	msg.URL = s.absoluteURL(msg.URL)
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		s.log.Error("push: encode payload", "err", err)
@@ -201,14 +243,51 @@ func (s *Sender) sendOne(ctx context.Context, sub store.PushSubscription, payloa
 		}
 		return outcomeRemoved
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
-		if err := s.store.MarkPushResult(ctx, sub.Endpoint, true, s.now().UnixMilli()); err != nil {
-			s.log.Error("push: mark ok", "err", err)
-		}
-		return outcomeSent
+		return s.recordAccepted(ctx, sub)
 	default:
 		s.log.Warn("push: unexpected status", "status", resp.StatusCode)
 		return s.recordFailure(ctx, sub)
 	}
+}
+
+// recordAccepted counts a message the push service took and drops the
+// endpoint when its device has been silent for too long.
+func (s *Sender) recordAccepted(ctx context.Context, sub store.PushSubscription) outcome {
+	now := s.now()
+	silence, err := s.store.RecordPushAccepted(ctx, sub.Endpoint, now.UnixMilli())
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) && !errors.Is(err, context.Canceled) {
+			s.log.Error("push: record accepted", "err", err)
+		}
+		return outcomeSent
+	}
+	if !isSilent(silence, now) {
+		return outcomeSent
+	}
+	if _, err := s.store.DeletePushSubscription(ctx, sub.Endpoint); err != nil {
+		s.log.Error("push: drop silent endpoint", "err", err)
+		return outcomeSent
+	}
+	s.log.Info("push: dropped an endpoint that never confirms delivery",
+		"service", serviceHost(sub.Endpoint), "role", sub.Role, "sub", sub.SubID,
+		"unconfirmed", silence.Unconfirmed, "silent_days", int(now.Sub(time.UnixMilli(silence.Since)).Hours()/24))
+	return outcomeRemoved
+}
+
+// isSilent applies both limits: enough unanswered messages, over long enough.
+func isSilent(silence store.PushSilence, now time.Time) bool {
+	return silence.Unconfirmed >= maxUnconfirmed &&
+		silence.Since > 0 &&
+		now.Sub(time.UnixMilli(silence.Since)) >= unconfirmedGrace
+}
+
+// serviceHost names the push service for logs without exposing the endpoint,
+// which is a bearer capability.
+func serviceHost(endpoint string) string {
+	if u, err := url.Parse(endpoint); err == nil {
+		return u.Host
+	}
+	return "unknown"
 }
 
 func (s *Sender) recordFailure(ctx context.Context, sub store.PushSubscription) outcome {
@@ -217,8 +296,14 @@ func (s *Sender) recordFailure(ctx context.Context, sub store.PushSubscription) 
 			return outcomeRemoved
 		}
 	}
-	if err := s.store.MarkPushResult(ctx, sub.Endpoint, false, 0); err != nil && !errors.Is(err, context.Canceled) {
-		s.log.Error("push: mark failure", "err", err)
+	if err := s.store.RecordPushFailure(ctx, sub.Endpoint); err != nil && !errors.Is(err, context.Canceled) {
+		s.log.Error("push: record failure", "err", err)
 	}
 	return outcomeFailed
+}
+
+// Receipt records that a device's service worker received a message. It
+// reports whether the endpoint is known.
+func (s *Sender) Receipt(ctx context.Context, endpoint string) (bool, error) {
+	return s.store.RecordPushReceipt(ctx, endpoint, s.now().UnixMilli())
 }

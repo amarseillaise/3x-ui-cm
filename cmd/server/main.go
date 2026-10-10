@@ -168,7 +168,12 @@ func serve() error {
 	if err != nil {
 		return err
 	}
-	sender := push.New(st, env.VAPIDPublicKey, env.VAPIDPrivateKey, env.VAPIDSubject, log)
+	sender := push.New(st, push.Config{
+		PublicKey:  env.VAPIDPublicKey,
+		PrivateKey: env.VAPIDPrivateKey,
+		Subject:    env.VAPIDSubject,
+		BaseURL:    env.AppBaseURL,
+	}, log)
 	if !sender.Enabled() {
 		log.Warn("VAPID keys not set: Web Push disabled (run `server gen-vapid`)")
 	}
