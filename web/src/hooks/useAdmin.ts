@@ -24,3 +24,12 @@ export function useResolveRenewal() {
     onSettled: () => qc.invalidateQueries({ queryKey: ['admin'] }),
   })
 }
+
+/** Signs in with ADMIN_PASSWORD; the stats query then refetches and the panel appears. */
+export function useAdminLogin() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (password: string) => api<void>('/api/admin/login', { method: 'POST', body: JSON.stringify({ password }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin'] }),
+  })
+}

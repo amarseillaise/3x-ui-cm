@@ -12,14 +12,15 @@ export function useMe() {
   })
 }
 
-export function useLogout() {
+/** Ends the session. An admin goes back to the sign-in form, a client to the "need a link" page. */
+export function useLogout(redirectTo = '/no-session') {
   const qc = useQueryClient()
   const navigate = useNavigate()
   return useMutation({
     mutationFn: () => api<void>('/api/logout', { method: 'POST' }),
     onSettled: () => {
       qc.clear()
-      void navigate('/no-session', { replace: true })
+      void navigate(redirectTo, { replace: true })
     },
   })
 }

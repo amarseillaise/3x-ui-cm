@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"crypto/subtle"
 	"errors"
 	"net/http"
 	"regexp"
@@ -51,25 +50,6 @@ func (s *Server) handleClientLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
-}
-
-// handleAdminLink is the admin magic link: GET /a/{secret}.
-func (s *Server) handleAdminLink(w http.ResponseWriter, r *http.Request) {
-	if !s.links.Allow(auth.ClientIP(r, s.env.TrustProxy)) {
-		http.Error(w, "Слишком много попыток, подождите минуту", http.StatusTooManyRequests)
-		return
-	}
-	secret := r.PathValue("secret")
-	if subtle.ConstantTimeCompare([]byte(secret), []byte(s.env.AdminLinkSecret)) != 1 {
-		http.Redirect(w, r, "/invalid-link", http.StatusSeeOther)
-		return
-	}
-	if _, err := s.sessions.Create(r.Context(), w, store.RoleAdmin, "", r.UserAgent()); err != nil {
-		s.log.Error("admin link: create session", "err", err)
-		writeError(w, http.StatusInternalServerError, "internal", "Внутренняя ошибка сервера")
-		return
-	}
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 // handleMe is GET /api/me.

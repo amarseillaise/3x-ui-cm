@@ -75,5 +75,5 @@ nginx-config:
 ## Print fresh secrets for .env.
 gen-secrets:
 	@echo "ADMIN_TOKEN=$$(openssl rand -hex 32)"
-	@echo "ADMIN_LINK_SECRET=$$(openssl rand -hex 32)"
+	@echo "ADMIN_PASSWORD=$$(openssl rand -base64 18 | tr -d '/+=')"
 	@echo "SESSION_SECRET=$$(openssl rand -hex 32)"

@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { isApiError } from '../api'
 import { errorText } from '../errors'
 import { t } from '../i18n/ru'
 import { formatDate, formatDateTime, formatMoney, relativeTime } from '../format'
-import { useAdminRenewals, useAdminStats, useResolveRenewal } from '../hooks/useAdmin'
+import { useAdminLogin, useAdminRenewals, useAdminStats, useResolveRenewal } from '../hooks/useAdmin'
 import { useLogout } from '../hooks/useMe'
 import type { RenewalRequest } from '../types'
 import Button from '../components/Button'
@@ -19,12 +19,22 @@ type Tab = 'pending' | 'history' | 'broadcast'
 
 export default function AdminPage() {
   const stats = useAdminStats()
-  const logout = useLogout()
+  const logout = useLogout('/admin')
   const [tab, setTab] = useState<Tab>('pending')
 
   if (stats.isPending) return <Centered>{t.loading}</Centered>
-  if (isApiError(stats.error, 401)) return <Message title={t.admin.noSessionTitle} body={t.admin.noSessionBody} />
-  if (isApiError(stats.error, 403)) return <Message title={t.admin.forbiddenTitle} body={t.admin.forbiddenBody} />
+  if (isApiError(stats.error, 401)) return <AdminLogin />
+  if (isApiError(stats.error, 403)) {
+    return (
+      <div className="mx-auto flex min-h-dvh max-w-md flex-col items-center justify-center gap-4 p-6 text-center">
+        <h1 className="text-xl font-semibold">{t.admin.forbiddenTitle}</h1>
+        <p className="text-slate-400">{t.admin.forbiddenBody}</p>
+        <Button variant="secondary" onClick={() => logout.mutate()} disabled={logout.isPending}>
+          {t.logout}
+        </Button>
+      </div>
+    )
+  }
   if (stats.error || !stats.data) return <Message title={t.admin.title} body={errorText(stats.error)} />
 
   const pendingCount = stats.data.renewals.pending ?? 0
@@ -128,5 +138,40 @@ function RenewalList({ status }: { status: string }) {
         </Card>
       ))}
     </div>
+  )
+}
+
+function AdminLogin() {
+  const login = useAdminLogin()
+  const [password, setPassword] = useState('')
+  const onSubmit = (e: FormEvent) => {
+    e.preventDefault()
+    if (password) login.mutate(password)
+  }
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-sm flex-col justify-center gap-4 p-6">
+      <h1 className="text-xl font-semibold">{t.admin.loginTitle}</h1>
+      <form onSubmit={onSubmit} className="flex flex-col gap-3">
+        {/* A fixed user name lets the iPhone keychain save and fill the password for this site. */}
+        <input type="text" name="username" autoComplete="username" value="admin" readOnly hidden />
+        <label className="flex flex-col gap-1 text-sm text-slate-300">
+          {t.admin.password}
+          <input
+            type="password"
+            name="password"
+            autoComplete="current-password"
+            autoFocus
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="min-h-12 rounded-xl border border-slate-700 bg-slate-900 px-4 text-base text-slate-100 outline-none focus:border-blue-500"
+          />
+        </label>
+        {login.error && <p className="text-sm text-rose-300">{errorText(login.error)}</p>}
+        <Button type="submit" disabled={login.isPending || !password}>
+          {login.isPending ? t.admin.loggingIn : t.admin.login}
+        </Button>
+      </form>
+    </main>
   )
 }

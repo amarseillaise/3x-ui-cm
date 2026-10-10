@@ -1,9 +1,14 @@
 package httpapi
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"net/http"
 	"strings"
+
+	"github.com/amarseillaise/3x-ui-cm/internal/auth"
+	"github.com/amarseillaise/3x-ui-cm/internal/store"
 
 	"github.com/amarseillaise/3x-ui-cm/internal/xui"
 )
@@ -66,4 +71,47 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 		"vapidPublicKey": s.push.PublicKey(),
 		"plans":          len(s.app.Plans),
 	})
+}
+
+// handleAdminLogin is POST /api/admin/login: the password from ADMIN_PASSWORD
+// opens an admin session. It replaced the /a/<secret> link, which iOS could not
+// carry into an app installed on the home screen.
+func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
+	ip := auth.ClientIP(r, s.env.TrustProxy)
+	if !s.logins.Allow(ip) {
+		writeError(w, http.StatusTooManyRequests, "rate_limited", "Слишком много попыток, подождите минуту")
+		return
+	}
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "bad_request", "Некорректное тело запроса")
+		return
+	}
+	if !passwordMatches(req.Password, s.env.AdminPassword) {
+		// Logged with the address so a fail2ban rule can act on repeats.
+		s.log.Warn("admin login: wrong password", "ip", ip)
+		writeError(w, http.StatusUnauthorized, "wrong_password", "Неверный пароль")
+		return
+	}
+	if _, err := s.sessions.Create(r.Context(), w, store.RoleAdmin, "", r.UserAgent()); err != nil {
+		s.log.Error("admin login: create session", "err", err)
+		writeError(w, http.StatusInternalServerError, "internal", "Внутренняя ошибка сервера")
+		return
+	}
+	s.log.Info("admin login", "ip", ip)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// passwordMatches compares in constant time. Hashing both sides first also
+// hides the length, which subtle.ConstantTimeCompare would reveal by returning
+// early on a length mismatch.
+func passwordMatches(given, want string) bool {
+	if want == "" {
+		return false
+	}
+	g := sha256.Sum256([]byte(given))
+	w := sha256.Sum256([]byte(want))
+	return subtle.ConstantTimeCompare(g[:], w[:]) == 1
 }

@@ -16,6 +16,11 @@ import (
 
 const minSecretLen = 16
 
+// minPasswordLen is for ADMIN_PASSWORD, which a person types on a phone.
+// Shorter than the random secrets, but long enough that the rate limit on
+// login makes guessing it hopeless.
+const minPasswordLen = 12
+
 // Env holds configuration read from environment variables. It contains secrets:
 // never log the whole struct.
 type Env struct {
@@ -26,9 +31,9 @@ type Env struct {
 	AppBaseURL string
 	SubBaseURL string
 
-	AdminToken      string
-	AdminLinkSecret string
-	SessionSecret   string
+	AdminToken    string
+	AdminPassword string
+	SessionSecret string
 
 	VAPIDPublicKey  string
 	VAPIDPrivateKey string
@@ -72,7 +77,7 @@ func loadEnv(lookup func(string) (string, bool)) (Env, error) {
 		AppBaseURL:      strings.TrimRight(get("APP_BASE_URL", ""), "/"),
 		SubBaseURL:      get("SUB_BASE_URL", ""),
 		AdminToken:      get("ADMIN_TOKEN", ""),
-		AdminLinkSecret: get("ADMIN_LINK_SECRET", ""),
+		AdminPassword:   get("ADMIN_PASSWORD", ""),
 		SessionSecret:   get("SESSION_SECRET", ""),
 		VAPIDPublicKey:  get("VAPID_PUBLIC_KEY", ""),
 		VAPIDPrivateKey: get("VAPID_PRIVATE_KEY", ""),
@@ -96,7 +101,6 @@ func loadEnv(lookup func(string) (string, bool)) (Env, error) {
 	}
 	for _, r := range []struct{ key, val string }{
 		{"ADMIN_TOKEN", e.AdminToken},
-		{"ADMIN_LINK_SECRET", e.AdminLinkSecret},
 		{"SESSION_SECRET", e.SessionSecret},
 	} {
 		switch {
@@ -106,8 +110,15 @@ func loadEnv(lookup func(string) (string, bool)) (Env, error) {
 			errs = append(errs, fmt.Errorf("%s must be at least %d characters", r.key, minSecretLen))
 		}
 	}
-	if e.AdminToken != "" && e.AdminToken == e.AdminLinkSecret {
-		errs = append(errs, errors.New("ADMIN_LINK_SECRET must differ from ADMIN_TOKEN"))
+	switch {
+	case e.AdminPassword == "":
+		errs = append(errs, errors.New("ADMIN_PASSWORD is required"))
+	case len([]rune(e.AdminPassword)) < minPasswordLen:
+		errs = append(errs, fmt.Errorf("ADMIN_PASSWORD must be at least %d characters", minPasswordLen))
+	case e.AdminPassword == e.AdminToken:
+		// The token travels in Authorization headers and scripts; the password
+		// must not unlock the same door if one of them leaks.
+		errs = append(errs, errors.New("ADMIN_PASSWORD must differ from ADMIN_TOKEN"))
 	}
 	if e.NodeURL != "" && !isHTTPURL(e.NodeURL) {
 		errs = append(errs, errors.New("NODE_URL must be an absolute http(s) URL"))

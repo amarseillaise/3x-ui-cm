@@ -26,8 +26,8 @@ import (
 )
 
 const (
-	adminToken  = "admin-token-0123456789abcdef0123456789"
-	adminSecret = "admin-link-secret-0123456789abcdef01234"
+	adminToken    = "admin-token-0123456789abcdef0123456789"
+	adminPassword = "correct horse battery staple"
 )
 
 var defaultExpiry = time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
@@ -140,7 +140,7 @@ func newEnv(t *testing.T) *env {
 	app, _ := config.ParseAppConfig([]byte("plans:\n  - {id: p30, title: T, days: 30, price: 180}\nrequisites:\n  - {label: L, value: V}\n"))
 	e := config.Env{
 		NodeURL: panel.URL, NodeAPIToken: "tok", AppBaseURL: "http://cab.test",
-		AdminToken: adminToken, AdminLinkSecret: adminSecret, SessionSecret: strings.Repeat("s", 32),
+		AdminToken: adminToken, AdminPassword: adminPassword, SessionSecret: strings.Repeat("s", 32),
 		NotifyDays: []int{7, 3, 1}, TrustProxy: false,
 	}
 	pub, priv, _ := push.GenerateVAPID()
@@ -255,14 +255,8 @@ func TestMagicLinkRateLimit(t *testing.T) {
 
 func TestAdminLinkAndBearer(t *testing.T) {
 	e := newEnv(t)
-	if res := e.get(t, "/a/wrong-secret"); res.Header.Get("Location") != "/invalid-link" {
-		t.Fatalf("wrong secret: %d %s", res.StatusCode, res.Header.Get("Location"))
-	}
-	res := e.get(t, "/a/"+adminSecret)
-	if res.StatusCode != http.StatusSeeOther || res.Header.Get("Location") != "/admin" {
-		t.Fatalf("admin link: %d %s", res.StatusCode, res.Header.Get("Location"))
-	}
-	res = e.get(t, "/api/admin/link?email=alice")
+	e.loginAdmin(t)
+	res := e.get(t, "/api/admin/link?email=alice")
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("admin link by cookie: %d", res.StatusCode)
 	}
@@ -659,5 +653,94 @@ func TestPushReceiptWorksWithoutSession(t *testing.T) {
 	}
 	if !limited {
 		t.Error("receipts must be rate limited per address")
+	}
+}
+
+// loginAdmin signs the test client in with the admin password.
+func (e *env) loginAdmin(t *testing.T) {
+	t.Helper()
+	res := e.send(t, http.MethodPost, "/api/admin/login", `{"password":"`+adminPassword+`"}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusNoContent {
+		t.Fatalf("admin login: %d", res.StatusCode)
+	}
+}
+
+func TestAdminPasswordLogin(t *testing.T) {
+	e := newEnv(t)
+	if res := e.get(t, "/api/admin/stats"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("stats before login: %d, want 401", res.StatusCode)
+	}
+
+	res := e.send(t, http.MethodPost, "/api/admin/login", `{"password":"wrong password here"}`)
+	var out struct {
+		Error string `json:"error"`
+	}
+	decode(t, res, &out)
+	if res.StatusCode != http.StatusUnauthorized || out.Error != "wrong_password" {
+		t.Errorf("wrong password: %d %q", res.StatusCode, out.Error)
+	}
+	if res := e.get(t, "/api/admin/stats"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("a failed login must not open a session: %d", res.StatusCode)
+	}
+
+	for _, bad := range []string{`not json`, `{}`, `{"password":""}`} {
+		if res := e.send(t, http.MethodPost, "/api/admin/login", bad); res.StatusCode != http.StatusBadRequest && res.StatusCode != http.StatusUnauthorized {
+			t.Errorf("body %q: %d", bad, res.StatusCode)
+		}
+	}
+}
+
+func TestAdminPasswordLoginOpensSession(t *testing.T) {
+	e := newEnv(t)
+	e.loginAdmin(t)
+	if res := e.get(t, "/api/admin/stats"); res.StatusCode != http.StatusOK {
+		t.Errorf("stats after login: %d", res.StatusCode)
+	}
+	// An admin session is still not a client session.
+	if res := e.get(t, "/api/me"); res.StatusCode != http.StatusForbidden {
+		t.Errorf("admin on a client route: %d, want 403", res.StatusCode)
+	}
+}
+
+// Five guesses a minute per address makes a 12-character password hopeless
+// to guess online.
+func TestAdminLoginIsRateLimited(t *testing.T) {
+	e := newEnv(t)
+	limited := false
+	for i := 0; i < 10 && !limited; i++ {
+		res := e.send(t, http.MethodPost, "/api/admin/login", `{"password":"guess-number-`+strconv.Itoa(i)+`"}`)
+		res.Body.Close()
+		limited = res.StatusCode == http.StatusTooManyRequests
+	}
+	if !limited {
+		t.Fatal("login attempts must be rate limited")
+	}
+	// The limit holds even for the right password, or it would only slow
+	// guessing down instead of stopping it.
+	res := e.send(t, http.MethodPost, "/api/admin/login", `{"password":"`+adminPassword+`"}`)
+	res.Body.Close()
+	if res.StatusCode != http.StatusTooManyRequests {
+		t.Errorf("right password while limited: %d, want 429", res.StatusCode)
+	}
+}
+
+// The old magic link must no longer sign anyone in.
+func TestOldAdminLinkNoLongerSignsIn(t *testing.T) {
+	e := newEnv(t)
+	e.get(t, "/a/some-old-secret-value-0123456789")
+	if res := e.get(t, "/api/admin/stats"); res.StatusCode != http.StatusUnauthorized {
+		t.Errorf("old /a/ link opened a session: %d", res.StatusCode)
+	}
+}
+
+func TestPasswordMatches(t *testing.T) {
+	if !passwordMatches("correct horse", "correct horse") {
+		t.Error("equal passwords must match")
+	}
+	for _, c := range [][2]string{{"correct horsE", "correct horse"}, {"correct", "correct horse"}, {"", "x"}, {"x", ""}, {"", ""}} {
+		if passwordMatches(c[0], c[1]) {
+			t.Errorf("passwordMatches(%q, %q) must be false", c[0], c[1])
+		}
 	}
 }

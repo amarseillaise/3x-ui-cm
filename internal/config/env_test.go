@@ -15,12 +15,12 @@ func lookupFrom(m map[string]string) func(string) (string, bool) {
 
 func validEnv() map[string]string {
 	return map[string]string{
-		"NODE_URL":          "https://panel.example.com:2053/base/",
-		"NODE_API_TOKEN":    "token",
-		"APP_BASE_URL":      "https://cab.example.com/",
-		"ADMIN_TOKEN":       strings.Repeat("a", 32),
-		"ADMIN_LINK_SECRET": strings.Repeat("b", 32),
-		"SESSION_SECRET":    strings.Repeat("c", 32),
+		"NODE_URL":       "https://panel.example.com:2053/base/",
+		"NODE_API_TOKEN": "token",
+		"APP_BASE_URL":   "https://cab.example.com/",
+		"ADMIN_TOKEN":    strings.Repeat("a", 32),
+		"ADMIN_PASSWORD": "correct horse battery",
+		"SESSION_SECRET": strings.Repeat("c", 32),
 	}
 }
 
@@ -51,7 +51,9 @@ func TestLoadEnvErrors(t *testing.T) {
 		"missing NODE_URL":      func(m map[string]string) { delete(m, "NODE_URL") },
 		"bad NODE_URL":          func(m map[string]string) { m["NODE_URL"] = "panel.example.com" },
 		"short secret":          func(m map[string]string) { m["SESSION_SECRET"] = "short" },
-		"same admin secrets":    func(m map[string]string) { m["ADMIN_LINK_SECRET"] = m["ADMIN_TOKEN"] },
+		"missing password":      func(m map[string]string) { delete(m, "ADMIN_PASSWORD") },
+		"short password":        func(m map[string]string) { m["ADMIN_PASSWORD"] = "short123" },
+		"password equals token": func(m map[string]string) { m["ADMIN_PASSWORD"] = m["ADMIN_TOKEN"] },
 		"half VAPID":            func(m map[string]string) { m["VAPID_PUBLIC_KEY"] = "x" },
 		"VAPID without subject": func(m map[string]string) { m["VAPID_PUBLIC_KEY"] = "x"; m["VAPID_PRIVATE_KEY"] = "y" },
 		"bad NOTIFY_DAYS":       func(m map[string]string) { m["NOTIFY_DAYS"] = "7,0" },

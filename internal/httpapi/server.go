@@ -43,6 +43,7 @@ type Server struct {
 	sessions *auth.Manager
 	links    *auth.Limiter
 	receipts *auth.Limiter
+	logins   *auth.Limiter
 	now      func() time.Time
 
 	// healthMu guards the cached panel health only. The probe itself runs
@@ -80,6 +81,7 @@ func New(d Deps) *Server {
 		sessions: auth.NewManager(d.Store, d.Env.SessionSecret, strings.HasPrefix(d.Env.AppBaseURL, "https://")),
 		links:    auth.NewLimiter(10, 10),
 		receipts: auth.NewLimiter(60, 30),
+		logins:   auth.NewLimiter(5, 5),
 		now:      time.Now,
 	}
 	s.routes(d.Static)
@@ -92,7 +94,8 @@ func (s *Server) routes(static fs.FS) {
 
 	// Magic links.
 	m.HandleFunc("GET /s/{subId}", s.handleClientLink)
-	m.HandleFunc("GET /a/{secret}", s.handleAdminLink)
+	// Admin sign-in by password. Old /a/<secret> links now just open the client page.
+	m.HandleFunc("POST /api/admin/login", s.handleAdminLogin)
 
 	// Client API.
 	client := s.requireRole(store.RoleClient)
