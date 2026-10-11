@@ -4,12 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+<meta http-equiv="refresh" content="0;url=__APP_BASE_URL__/s/{{ .sId }}">
 <title>{{ if .subTitle }}{{ .subTitle }}{{ else }}Кабинет подписки{{ end }}</title>
-<!--
-  No automatic redirect on purpose: a page that instantly sends the visitor to
-  another address is a classic sign of a phishing chain, and Safari showed a
-  "deceptive site" warning on some iPhones. The visitor taps the button instead.
--->
 <style>
   :root { color-scheme: dark; }
   html, body { margin: 0; min-height: 100%; background: #0b1120; color: #e2e8f0;
@@ -25,9 +21,11 @@
 <body>
 <main>
   <h1>{{ if .subTitle }}{{ .subTitle }}{{ else }}Кабинет подписки{{ end }}</h1>
-  <p>Срок подписки, трафик, продление и уведомления — в личном кабинете.</p>
+  <p>Открываем кабинет подписки…</p>
+  <!-- Fallback for browsers that block the automatic redirect. -->
   <a class="btn" href="__APP_BASE_URL__/s/{{ .sId }}">Открыть кабинет</a>
   <p class="hint">Эту же ссылку добавьте в VPN-приложение как подписку.</p>
 </main>
+<script>location.replace("__APP_BASE_URL__/s/{{ .sId }}");</script>
 </body>
 </html>

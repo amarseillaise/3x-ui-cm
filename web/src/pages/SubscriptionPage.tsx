@@ -5,9 +5,9 @@ import { isApiError } from '../api'
 import { errorText } from '../errors'
 import { t } from '../i18n/ru'
 import { ADMIN_PATH } from '../routes'
-import { useLogout, useMe } from '../hooks/useMe'
+import { useMe } from '../hooks/useMe'
 import { daysWord, formatBytes, formatDate, relativeTime } from '../format'
-import { copyText, isIOS, isStandalone } from '../platform'
+import { copyText, installPlatform } from '../platform'
 import type { SubscriptionInfo } from '../types'
 import Button from '../components/Button'
 import Card from '../components/Card'
@@ -19,7 +19,6 @@ import NoSessionPage from './NoSessionPage'
 
 export default function SubscriptionPage() {
   const me = useMe()
-  const logout = useLogout()
 
   if (me.isPending) return <Centered>{t.loading}</Centered>
   if (isApiError(me.error, 401)) return <NoSessionPage />
@@ -42,15 +41,13 @@ export default function SubscriptionPage() {
   }
 
   const { subscription: sub, renewal, push } = me.data
-  const showIOSHint = isIOS() && !isStandalone()
+  const install = installPlatform()
 
   return (
     <main className="mx-auto flex max-w-md flex-col gap-4 p-4 pb-12">
-      <header className="flex items-center justify-between">
+      {/* No sign-out here: a client would only lock themselves out until they find the link again. */}
+      <header>
         <h1 className="text-xl font-semibold">{t.subscription.title}</h1>
-        <Button variant="ghost" className="min-h-10 px-3 py-2 text-sm" onClick={() => logout.mutate()} disabled={logout.isPending}>
-          {t.logout}
-        </Button>
       </header>
 
       <StatusCard sub={sub} />
@@ -84,10 +81,10 @@ export default function SubscriptionPage() {
 
       <LinkCard url={sub.subscriptionUrl} />
 
-      {showIOSHint && (
+      {install && (
         <Card className="border-blue-900/60 bg-blue-950/40">
-          <h2 className="mb-1 font-semibold">{t.ios.title}</h2>
-          <p className="text-sm text-slate-300">{t.ios.body}</p>
+          <h2 className="mb-1 font-semibold">{t.install.title}</h2>
+          <p className="text-sm text-slate-300">{t.install[install]}</p>
         </Card>
       )}
     </main>
@@ -192,16 +189,9 @@ function LinkCard({ url }: { url: string }) {
         <QRCodeSVG value={url} size={192} bgColor="#ffffff" fgColor="#0f172a" level="M" />
       </div>
       <p className="mb-3 break-all rounded-lg bg-slate-950 px-3 py-2 font-mono text-xs text-slate-300">{url}</p>
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="secondary" onClick={() => void onCopy()}>
-          {copied ? t.link.copied : t.link.copy}
-        </Button>
-        <a href={url} className="block" target="_blank" rel="noreferrer">
-          <Button variant="secondary" className="w-full">
-            {t.link.open}
-          </Button>
-        </a>
-      </div>
+      <Button variant="secondary" className="w-full" onClick={() => void onCopy()}>
+        {copied ? t.link.copied : t.link.copy}
+      </Button>
     </Card>
   )
 }

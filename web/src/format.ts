@@ -1,4 +1,5 @@
-const dateFmt = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })
+// 08.10.2026: short and unambiguous next to "Истекла" / "Действует до".
+const dateFmt = new Intl.DateTimeFormat('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
 const dateTimeFmt = new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
 const relFmt = new Intl.RelativeTimeFormat('ru-RU', { numeric: 'auto' })
 

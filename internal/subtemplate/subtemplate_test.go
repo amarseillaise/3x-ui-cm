@@ -28,21 +28,20 @@ func TestRenderProducesValidPanelTemplate(t *testing.T) {
 	}
 	html := page.String()
 	want := "https://cab.example.com/s/abc123xyz"
-	for _, frag := range []string{`href="` + want + `"`, "T &amp; Co"} {
+	// The page sends the browser on by itself, twice over, and keeps a button
+	// for browsers that block both.
+	for _, frag := range []string{
+		`content="0;url=` + want + `"`,
+		`location.replace("` + want + `")`,
+		`href="` + want + `"`,
+		"T &amp; Co",
+	} {
 		if !strings.Contains(html, frag) {
 			t.Errorf("rendered page lacks %q:\n%s", frag, html)
 		}
 	}
-	if strings.Count(html, want) != 1 {
-		t.Errorf("expected the cabinet link once, on the button; got %d", strings.Count(html, want))
-	}
-	// An instant redirect looks like a phishing chain to Safari's checks; the
-	// visitor must tap the button instead.
-	lower := strings.ToLower(html)
-	for _, banned := range []string{`http-equiv="refresh"`, "location.replace", "location.href", "<script"} {
-		if strings.Contains(lower, banned) {
-			t.Errorf("page must not redirect by itself, found %q", banned)
-		}
+	if strings.Count(html, want) != 3 {
+		t.Errorf("expected the cabinet link 3 times, got %d", strings.Count(html, want))
 	}
 }
 
