@@ -4,19 +4,26 @@ currency: RUB
 
 plans:
   - { id: p30,  title: "30 дней",  days: 30,  price: 180 }
-  - { id: p90,  title: "90 дней",  days: 90,  price: 500 }
-  - { id: p180, title: "180 дней", days: 180, price: 960 }
+  - { id: p90,  title: "90 дней (166₽ в мес.)",  days: 90,  price: 500 }
+  - { id: p180, title: "180 дней (155₽ в мес.)", days: 180, price: 930 }
+  - { id: p365, title: "365 дней (144₽ в мес. )", days: 365, price: 1740 }
 
 requisites:
-  - label: "СБП по номеру телефона"
-    value: "+7 9XX XXX-XX-XX"
-    note: "Т-Банк, получатель Марсель К."
+  - label: "Альфа-банк"
+    value: "2200"
+  - label: "Тинькофф"
+    value: "2200"
+  - label: "Сбер"
+    value: "2200"
+  - label: "ВТБ"
+    value: "2200"
+  - label: "Озон-банк"
+    value: "2204"
 
-payment_note: "После перевода нажмите «Я перевёл» — подписка продлится сразу. Администратор сверит платёж позже."
+payment_note: "После перевода нажмите «Продлить подписку» — она продлится сразу."
 
-# Footer links, shown to clients in the cabinet and on the "no link" pages.
-# Optional. Only http(s) links are accepted.
 contacts:
-  - { label: "Канал в Telegram",     url: "https://t.me/your_channel" }
-  - { label: "Написать в Telegram",  url: "https://t.me/your_username" }
-  - { label: "Написать ВКонтакте",   url: "https://vk.com/your_username" }
+  - { label: "Канал в Telegram",     url: "https://t.me/" }
+  - { label: "Telegram",  url: "https://t.me/" }
+  - { label: "ВК",   url: "https://vk.com/" }
+
