@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/amarseillaise/3x-ui-cm/internal/auth"
+	"github.com/amarseillaise/3x-ui-cm/internal/config"
 	"github.com/amarseillaise/3x-ui-cm/internal/domain"
 	"github.com/amarseillaise/3x-ui-cm/internal/store"
 	"github.com/amarseillaise/3x-ui-cm/internal/xui"
@@ -131,4 +132,15 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.log.Error("logout", "err", err)
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleContacts is GET /api/contacts: the footer links from config.yaml. It is
+// public because a visitor without a session is exactly who needs to reach the
+// owner, to ask for a working link.
+func (s *Server) handleContacts(w http.ResponseWriter, r *http.Request) {
+	contacts := s.app.Contacts
+	if contacts == nil {
+		contacts = []config.Contact{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contacts": contacts})
 }

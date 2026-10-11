@@ -10,6 +10,7 @@ import { useMyRenewals, usePlans, useRenew } from '../hooks/useRenewal'
 import type { Plan, PlansResponse, RenewalRequest } from '../types'
 import Button from '../components/Button'
 import Card from '../components/Card'
+import ContactsFooter from '../components/ContactsFooter'
 import Centered from '../components/Centered'
 import Message from '../components/Message'
 import RenewalStatusChip from '../components/RenewalStatusChip'
@@ -61,6 +62,8 @@ export default function RenewPage() {
       )}
 
       {history.data && history.data.requests.length > 0 && <History requests={history.data.requests} />}
+
+      <ContactsFooter className="mt-2" />
     </main>
   )
 }

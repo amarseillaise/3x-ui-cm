@@ -76,3 +76,9 @@ export interface AdminStats {
   vapidPublicKey: string
   plans: number
 }
+
+/** A footer link from config.yaml, e.g. a Telegram channel. */
+export interface Contact {
+  label: string
+  url: string
+}

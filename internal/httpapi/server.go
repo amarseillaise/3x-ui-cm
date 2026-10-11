@@ -106,6 +106,8 @@ func (s *Server) routes(static fs.FS) {
 	m.Handle("POST /api/logout", s.requireAnyRole()(http.HandlerFunc(s.handleLogout)))
 	m.Handle("POST /api/push/subscribe", s.requireAnyRole()(http.HandlerFunc(s.handlePushSubscribe)))
 	m.Handle("DELETE /api/push/subscribe", s.requireAnyRole()(http.HandlerFunc(s.handlePushUnsubscribe)))
+	// Public: the footer needs contacts on the "no session" pages too.
+	m.HandleFunc("GET /api/contacts", s.handleContacts)
 	// No session on purpose: see handlePushReceipt.
 	m.HandleFunc("POST /api/push/receipt", s.handlePushReceipt)
 

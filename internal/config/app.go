@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"strings"
 
@@ -26,12 +27,19 @@ type Requisite struct {
 	Note  string `yaml:"note,omitempty" json:"note,omitempty"`
 }
 
+// Contact is a link in the cabinet footer, e.g. a Telegram channel.
+type Contact struct {
+	Label string `yaml:"label" json:"label"`
+	URL   string `yaml:"url" json:"url"`
+}
+
 // AppConfig holds non-secret product settings from config.yaml.
 type AppConfig struct {
 	Currency    string      `yaml:"currency" json:"currency"`
 	Plans       []Plan      `yaml:"plans" json:"plans"`
 	Requisites  []Requisite `yaml:"requisites" json:"requisites"`
 	PaymentNote string      `yaml:"payment_note" json:"paymentNote"`
+	Contacts    []Contact   `yaml:"contacts" json:"contacts"`
 }
 
 // DefaultAppConfig returns a config with no plans: renewal is disabled.
@@ -99,6 +107,19 @@ func (c *AppConfig) Validate() error {
 	for i, r := range c.Requisites {
 		if strings.TrimSpace(r.Label) == "" || strings.TrimSpace(r.Value) == "" {
 			errs = append(errs, fmt.Errorf("requisites[%d]: label and value are required", i))
+		}
+	}
+	for i, ct := range c.Contacts {
+		ct.Label = strings.TrimSpace(ct.Label)
+		ct.URL = strings.TrimSpace(ct.URL)
+		c.Contacts[i] = ct
+		if ct.Label == "" {
+			errs = append(errs, fmt.Errorf("contacts[%d]: label is required", i))
+		}
+		// Only web links: the URL lands in an href on a page every client sees,
+		// so a "javascript:" value must never get through.
+		if u, err := url.Parse(ct.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			errs = append(errs, fmt.Errorf("contacts[%d]: url must be an absolute http(s) link", i))
 		}
 	}
 	return errors.Join(errs...)

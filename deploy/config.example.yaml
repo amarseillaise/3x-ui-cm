@@ -13,3 +13,10 @@ requisites:
     note: "Т-Банк, получатель Марсель К."
 
 payment_note: "После перевода нажмите «Я перевёл» — подписка продлится сразу. Администратор сверит платёж позже."
+
+# Footer links, shown to clients in the cabinet and on the "no link" pages.
+# Optional. Only http(s) links are accepted.
+contacts:
+  - { label: "Канал в Telegram",     url: "https://t.me/your_channel" }
+  - { label: "Написать в Telegram",  url: "https://t.me/your_username" }
+  - { label: "Написать ВКонтакте",   url: "https://vk.com/your_username" }

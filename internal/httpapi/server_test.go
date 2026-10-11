@@ -117,6 +117,7 @@ type env struct {
 	client *http.Client // keeps cookies, does not follow redirects
 	store  *store.Store
 	panel  *panelState
+	app    *config.AppConfig // the server holds this same pointer
 	now    time.Time
 }
 
@@ -152,7 +153,7 @@ func newEnv(t *testing.T) *env {
 	srv := httptest.NewServer(s.Handler())
 	t.Cleanup(srv.Close)
 	jar, _ := cookiejar.New(nil)
-	return &env{srv: srv, store: st, panel: state, now: now, client: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &env{srv: srv, store: st, panel: state, app: app, now: now, client: &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
 }
 
 func (e *env) get(t *testing.T, path string, headers ...string) *http.Response {
@@ -742,5 +743,36 @@ func TestPasswordMatches(t *testing.T) {
 		if passwordMatches(c[0], c[1]) {
 			t.Errorf("passwordMatches(%q, %q) must be false", c[0], c[1])
 		}
+	}
+}
+
+// The footer needs contacts on pages shown to visitors with no session.
+func TestContactsArePublic(t *testing.T) {
+	e := newEnv(t)
+	e.app.Contacts = []config.Contact{{Label: "Канал", URL: "https://t.me/channel"}}
+	res, err := http.Get(e.srv.URL + "/api/contacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Contacts []config.Contact `json:"contacts"`
+	}
+	decode(t, res, &out)
+	if res.StatusCode != http.StatusOK || len(out.Contacts) != 1 || out.Contacts[0].URL != "https://t.me/channel" {
+		t.Errorf("contacts without a session: %d %+v", res.StatusCode, out.Contacts)
+	}
+}
+
+// No contacts configured is an empty list, not null, so the footer can map over it.
+func TestContactsEmptyIsList(t *testing.T) {
+	e := newEnv(t)
+	res, err := http.Get(e.srv.URL + "/api/contacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if !strings.Contains(string(body), `"contacts":[]`) {
+		t.Errorf("want an empty list, got %s", body)
 	}
 }

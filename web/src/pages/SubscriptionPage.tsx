@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, Navigate } from 'react-router'
+import { Navigate, useNavigate } from 'react-router'
 import { QRCodeSVG } from 'qrcode.react'
 import { isApiError } from '../api'
 import { errorText } from '../errors'
@@ -8,12 +8,13 @@ import { ADMIN_PATH } from '../routes'
 import { useMe } from '../hooks/useMe'
 import { daysWord, formatBytes, formatDate, relativeTime } from '../format'
 import { copyText, installPlatform } from '../platform'
-import type { SubscriptionInfo } from '../types'
+import type { MeResponse, SubscriptionInfo } from '../types'
 import Button from '../components/Button'
 import Card from '../components/Card'
 import Centered from '../components/Centered'
 import StatusBadge from '../components/StatusBadge'
 import PushCard from '../components/PushCard'
+import ContactsFooter from '../components/ContactsFooter'
 import InvalidLinkPage from './InvalidLinkPage'
 import NoSessionPage from './NoSessionPage'
 
@@ -50,36 +51,9 @@ export default function SubscriptionPage() {
         <h1 className="text-xl font-semibold">{t.subscription.title}</h1>
       </header>
 
-      <StatusCard sub={sub} />
-
-      <Card>
-        <div className="flex flex-col gap-2 text-sm">
-          <TrafficRow sub={sub} />
-          <OnlineRow sub={sub} />
-          {sub.inboundCount > 0 && (
-            <div className="flex justify-between text-slate-400">
-              <span>{t.subscription.servers}</span>
-              <span>{sub.inboundCount}</span>
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {renewal.enabled && !sub.unlimited && (
-        <Card>
-          {renewal.hasPending ? (
-            <p className="text-center text-sm text-amber-300">{t.renew.pending}</p>
-          ) : (
-            <Link to="/renew" className="block">
-              <Button className="w-full">{t.renew.button}</Button>
-            </Link>
-          )}
-        </Card>
-      )}
+      <StatusCard sub={sub} renewal={renewal} />
 
       <PushCard enabled={push.enabled} vapidPublicKey={push.vapidPublicKey} />
-
-      <LinkCard url={sub.subscriptionUrl} />
 
       {install && (
         <Card className="border-blue-900/60 bg-blue-950/40">
@@ -87,11 +61,18 @@ export default function SubscriptionPage() {
           <p className="text-sm text-slate-300">{t.install[install]}</p>
         </Card>
       )}
+
+      <LinkCard url={sub.subscriptionUrl} />
+
+      <StatsCard sub={sub} />
+
+      <ContactsFooter className="mt-2" />
     </main>
   )
 }
 
-function StatusCard({ sub }: { sub: SubscriptionInfo }) {
+function StatusCard({ sub, renewal }: { sub: SubscriptionInfo; renewal: MeResponse['renewal'] }) {
+  const navigate = useNavigate()
   let headline: string
   let sub2: string | null = null
   switch (sub.status) {
@@ -119,6 +100,36 @@ function StatusCard({ sub }: { sub: SubscriptionInfo }) {
       </div>
       <p className={`text-lg font-semibold ${tone}`}>{headline}</p>
       {sub2 && <p className="mt-1 text-sm text-slate-400">{sub2}</p>}
+      {/* Renewal lives here rather than in a card of its own: it is about this status. */}
+      {renewal.enabled && !sub.unlimited && (
+        <div className="mt-4">
+          {renewal.hasPending ? (
+            <p className="text-sm text-amber-300">{t.renew.pending}</p>
+          ) : (
+            <Button className="w-full" onClick={() => void navigate('/renew')}>
+              {t.renew.button}
+            </Button>
+          )}
+        </div>
+      )}
+    </Card>
+  )
+}
+
+function StatsCard({ sub }: { sub: SubscriptionInfo }) {
+  return (
+    <Card>
+      <h2 className="mb-2 font-semibold">{t.subscription.statsTitle}</h2>
+      <div className="flex flex-col gap-2 text-sm">
+        <TrafficRow sub={sub} />
+        <OnlineRow sub={sub} />
+        {sub.inboundCount > 0 && (
+          <div className="flex justify-between text-slate-400">
+            <span>{t.subscription.servers}</span>
+            <span>{sub.inboundCount}</span>
+          </div>
+        )}
+      </div>
     </Card>
   )
 }

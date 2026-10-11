@@ -18,7 +18,7 @@ SQLite и ходит в мастер-панель по API. Архитектур
 ```bash
 git clone https://github.com/amarseillaise/3x-ui-cm.git && cd 3x-ui-cm
 cp deploy/.env.example .env
-cp deploy/config.example.yaml config.yaml    # тарифы и реквизиты, впишите свои
+cp deploy/config.example.yaml config.yaml    # тарифы, реквизиты и контакты, впишите свои
 ```
 
 **2. Секреты.**
