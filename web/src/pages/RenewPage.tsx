@@ -129,8 +129,8 @@ function PayStep({
         {data.paymentNote && <p className="mt-4 text-sm text-slate-400">{data.paymentNote}</p>}
       </Card>
       {message && <Card className="border-rose-900/60 bg-rose-950/30 text-sm text-rose-200">{message}</Card>}
-      <Button onClick={onPaid} disabled={busy} className="w-full">
-        {busy ? t.renew.sending : `${t.renew.paid} ${formatMoney(plan.price, data.currency)}`}
+      <Button variant="success" onClick={onPaid} disabled={busy} className="w-full">
+        {busy ? t.renew.sending : `${t.renew.paid}`}
       </Button>
       <Button variant="ghost" onClick={onBack} disabled={busy}>
         {t.back}
